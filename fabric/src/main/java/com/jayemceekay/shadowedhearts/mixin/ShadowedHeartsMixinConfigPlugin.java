@@ -42,6 +42,9 @@ public class ShadowedHeartsMixinConfigPlugin implements IMixinConfigPlugin {
         if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.emi.")) {
             return Platform.isModLoaded("emi");
         }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.rctapi.")) {
+            return Platform.isModLoaded("rctapi");
+        }
         if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.raiddens.")) {
             return net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer(MoonwoundRaidCompatibility.MOD_ID)
                     .map(mod -> MoonwoundRaidCompatibility.supportsMixin(mixinClassName, mod.getMetadata().getVersion().getFriendlyString()))

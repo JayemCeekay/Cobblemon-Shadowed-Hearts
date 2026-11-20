@@ -24,13 +24,13 @@ public abstract class MixinRequestInstruction {
     public abstract BattleActor getBattleActor();
     
     @Inject(method = "invoke$lambda$0", at = @At(value = "INVOKE", target = "Lcom/cobblemon/mod/common/api/battles/model/actor/BattleActor;sendUpdate(Lcom/cobblemon/mod/common/api/net/NetworkPacket;)V", shift = At.Shift.BEFORE))
-    private static void shadowedhearts$disableNonShadowMovesAtInvoke(RequestInstruction this$0, ShowdownActionRequest $request, CallbackInfoReturnable<Unit> cir) {
+    private static void shadowedhearts$restrictShadowChoices(RequestInstruction this$0, ShowdownActionRequest $request, CallbackInfoReturnable<Unit> cir) {
         var reqMovesets = $request.getActive();
         if (reqMovesets == null) return;
 
         var actor = this$0.getBattleActor();
-        if (actor.getType() != ActorType.PLAYER)
-            return;
+        var actorType = actor.getType();
+        if (actorType == ActorType.WILD) return;
 
         var requestSide = $request.getSide();
         if (requestSide == null || requestSide.getPokemon() == null) return;
@@ -54,11 +54,13 @@ public abstract class MixinRequestInstruction {
             if (!ShadowAspectUtil.hasShadowAspect(effected)) continue;
 
             var moveset = reqMovesets.get(i);
-            if (moveset == null || moveset.getMoves() == null) continue;
+            if (moveset == null) continue;
 
-            // Block gimmick flags on the moveset for shadow Pokémon based on config
+            // RCT chooses from this request before Mega Showdown applies the form to the field entity.
             IShadowConfig cfg = ShadowedHeartsConfigs.getInstance().getShadowConfig();
             if (!cfg.shadowCanMegaEvolve()) moveset.blockGimmick(ShowdownMoveset.Gimmick.MEGA_EVOLUTION);
+            if (actorType != ActorType.PLAYER || moveset.getMoves() == null) continue;
+
             if (!cfg.shadowCanUltraBurst()) moveset.blockGimmick(ShowdownMoveset.Gimmick.ULTRA_BURST);
             if (!cfg.shadowCanUseZMoves()) moveset.blockGimmick(ShowdownMoveset.Gimmick.Z_POWER);
             if (!cfg.shadowCanDynamax()) moveset.blockGimmick(ShowdownMoveset.Gimmick.DYNAMAX);

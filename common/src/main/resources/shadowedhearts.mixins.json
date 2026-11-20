@@ -55,6 +55,9 @@
     "pokeball.MixinPokeBallPosableState"
   ],
   "mixins": [
+    "rctapi.MixinRCTItemTargets",
+    "rctapi.MixinRCTBagItemActionResponse",
+    "rctapi.RCTTrainerBagAccessor",
     "midbattleexp.MixinMidBattleMoveLearning",
     "horde.MixinCraterRescueHerd",
     "horde.MixinCraterRescueRandomHorde",
@@ -92,6 +95,7 @@
     "megashowdown.MixinUltraGimmick",
     "MixinAuraReaderEquip",
     "MixinAuraLockedPokemonDespawn",
+    "MixinBattleActorSnagActions",
     "MixinBattleCaptureAction",
     "MixinBattleHeartGaugeActivation",
     "MixinBattlePokemon",

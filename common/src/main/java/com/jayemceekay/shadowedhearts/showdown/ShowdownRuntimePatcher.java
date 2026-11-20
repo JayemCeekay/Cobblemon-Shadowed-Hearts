@@ -32,6 +32,13 @@ public final class ShowdownRuntimePatcher {
         return List.of(
                 new FilePatch(ShowdownBattlePatches.DEX_FIELD, "dex-conditions.js"),
                 new FilePatch(ShowdownCapturePatches.CAPTURE, "battle.js"),
+                new FilePatch(ShowdownCaptureChoicePatches.AWAIT_CAPTURE_CHOICE, "side.js"),
+                new FilePatch(ShowdownCaptureChoicePatches.CAPTURE_CHOICE, "pokemon.js"),
+                new FilePatch(ShowdownCapturePatches.MOVE_TARGET, "battle.js"),
+                new FilePatch(ShowdownCapturePatches.BAG_ITEM, "battle.js"),
+                new FilePatch(ShowdownCapturePatches.REVIVAL_AVAILABLE, "../data/moves.js"),
+                new FilePatch(ShowdownCapturePatches.REVIVAL_AUTO_CHOICE, "side.js"),
+                new FilePatch(ShowdownCapturePatches.REVIVAL_TARGET, "side.js"),
                 new FilePatch(ShowdownBattlePatches.HEART_GAUGE_UPDATE, "battle-stream.js"),
                 new FilePatch(ShowdownBattlePatches.SCENT_CALM, "battle-stream.js"),
                 new FilePatch(ShowdownBattlePatches.CRATER_HOWL, "battle-stream.js"),

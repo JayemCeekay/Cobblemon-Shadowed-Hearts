@@ -66,6 +66,16 @@ tasks.register('testResourcePack', Zip) {
 allprojects {
     group = rootProject.maven_group
     version = rootProject.mod_version
+
+    plugins.withId('java') {
+        tasks.named('check') {
+            // Gradle attaches the default JVM test suite by provider. Run it explicitly with :common:test.
+            setDependsOn(dependsOn.findAll { dependency ->
+                !(dependency instanceof NamedDomainObjectProvider && dependency.name == 'test')
+            })
+        }
+    }
+
     java {
         toolchain {
             languageVersion = JavaLanguageVersion.of(21)

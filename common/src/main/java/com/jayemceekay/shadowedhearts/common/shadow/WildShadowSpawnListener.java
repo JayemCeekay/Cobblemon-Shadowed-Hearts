@@ -87,8 +87,24 @@ public final class WildShadowSpawnListener {
             // Insert shadow moves
             ShadowMoveUtil.assignShadowMoves(pokemon, RANDOM);
 
-            // Play spawn sound near by
-            if (ModSounds.SHADOW_AURA_INITIAL_BURST != null) {
+            scheduleSpawnSound(level, entity);
+
+            // Broadcast specialized aura for wild spawn: 2.5x height for 30 seconds (600 ticks)
+            // If it's holding a Shadow Shard, make it 24/7.
+            int sustain = ShadowAspectUtil.isHoldingShadowShard(pokemon) ? Integer.MAX_VALUE / 2 : 600;
+            AuraBroadcastQueue.queueBroadcast(entity, 2.5f, sustain);
+
+            return Unit.INSTANCE;
+        });
+    }
+
+    private static void scheduleSpawnSound(ServerLevel level, PokemonEntity entity) {
+        // Cobblemon fires the spawn event before adding the entity. Only an admitted Pokémon ticks this timer.
+        entity.after(1.0f, () -> {
+            Pokemon pokemon = entity.getPokemon();
+            if (level.getEntity(entity.getUUID()) == entity && entity.isAlive()
+                    && entity.getOwnerUUID() == null && pokemon.isWild() && !pokemon.isBattleClone()
+                    && ShadowAspectUtil.hasShadowAspect(pokemon)) {
                 S2CUtils.broadcastPlaySound(
                         ModSounds.SHADOW_AURA_INITIAL_BURST.getId(),
                         SoundSource.NEUTRAL,
@@ -98,12 +114,6 @@ public final class WildShadowSpawnListener {
                         64.0f
                 );
             }
-
-            // Broadcast specialized aura for wild spawn: 2.5x height for 30 seconds (600 ticks)
-            // If it's holding a Shadow Shard, make it 24/7.
-            int sustain = ShadowAspectUtil.isHoldingShadowShard(pokemon) ? Integer.MAX_VALUE / 2 : 600;
-            AuraBroadcastQueue.queueBroadcast(entity, 2.5f, sustain);
-
             return Unit.INSTANCE;
         });
     }

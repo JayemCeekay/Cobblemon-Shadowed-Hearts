@@ -187,6 +187,9 @@ public final class ShadowPokemonReadingProvider implements AuraReadingProvider {
     }
 
     static Component auraStateText(boolean reverseMode, boolean hyperMode, int heartMeter, int heartMaximum) {
+        if (hyperMode && reverseMode) {
+            return Component.translatable("hud.shadowedhearts.aura_reader.reading.hyper_and_reverse_mode");
+        }
         if (hyperMode) {
             return Component.translatable("hud.shadowedhearts.aura_reader.reading.hyper_mode");
         }

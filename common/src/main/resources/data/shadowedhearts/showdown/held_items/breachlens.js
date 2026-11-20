@@ -44,7 +44,7 @@
                 move.ignorePositiveDefensive = true;
             }
         },
-        // Resolve after the ordinary Shadow Engine entry check; never start a second episode.
+        // Let the ordinary Shadow Engine check resolve Reverse Mode entry first.
         onAfterMovePriority: -1,
         onAfterMove(pokemon, target, move) {
             const action = this.effectState.action;
@@ -59,10 +59,10 @@
             } else {
                 this.effectState.primed = false;
             }
-            const config = this.dex.data.Scripts.shadowedhearts?.Config?.reverseMode;
-            if (!action.breached || !pokemon.set?.isShadow || !config?.enabled
-                || pokemon.fainted || pokemon.hp <= 0
-                || pokemon.volatiles["hypermode"] || pokemon.volatiles["reversemode"]) return;
+            const config = this.dex.data.Scripts.shadowedhearts?.Config;
+            if (!action.breached || !pokemon.set?.isShadow || !config?.reverseMode?.enabled
+                || pokemon.fainted || pokemon.hp <= 0 || pokemon.volatiles["reversemode"]
+                || (pokemon.volatiles["hypermode"] && !config.modeRules?.allowSimultaneousHyperAndReverse)) return;
             if (this.randomChance(1, 4)) pokemon.addVolatile("reversemode");
         },
     },

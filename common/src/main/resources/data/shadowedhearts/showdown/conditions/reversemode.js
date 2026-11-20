@@ -3,13 +3,17 @@
     effectType: "VolatileStatus",
     noCopy: true,
     onStart(pokemon) {
-        const config = this.dex.data.Scripts.shadowedhearts?.Config?.reverseMode || {enabled: false};
-        if (!config.enabled || !pokemon?.set?.isShadow) return false;
+        const config = this.dex.data.Scripts.shadowedhearts?.Config;
+        if (!config?.reverseMode?.enabled || !pokemon?.set?.isShadow) return false;
         pokemon.set.isReverse = true;
-        pokemon.set.isHyper = false;
         this.add('-start', pokemon, 'Reverse Mode');
-        if (pokemon.volatiles['hypermode']) {
-            pokemon.removeVolatile('hypermode');
+        if (!config.modeRules?.allowSimultaneousHyperAndReverse) {
+            if (pokemon.volatiles['hypermode']) {
+                pokemon.removeVolatile('hypermode');
+            } else if (pokemon.set.isHyper) {
+                pokemon.set.isHyper = false;
+                this.add('hyper', 'end', pokemon.getSlot(), pokemon.uuid);
+            }
         }
         if (this.turn && this.turn >= 1) {
             this.add('reverse', 'start', pokemon.getSlot());

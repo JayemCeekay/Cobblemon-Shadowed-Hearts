@@ -16,6 +16,7 @@ public final class ShadowBattleRulesConfig {
     private ModConfigSpec.EnumValue<ShadowRushVariant> shadowRushVariant;
     private ModConfigSpec.BooleanValue unlimitedShadowPP, hyperShadowRushCrit;
     private ModConfigSpec.EnumValue<HyperBehavior> hyperBehavior;
+    private ModConfigSpec.BooleanValue shadowMovesCanDisobey, allowSimultaneousHyperAndReverse;
     private ModConfigSpec.EnumValue<ReverseEntry> reverseEntry;
     private ModConfigSpec.BooleanValue hyperItemRefusal, reverseItemRefusal;
     private ModConfigSpec.ConfigValue<List<? extends String>> reverseSpeciesOverrides;
@@ -37,6 +38,10 @@ public final class ShadowBattleRulesConfig {
                 .define("hyperShadowRushCrit", false);
         hyperBehavior = builder.comment("MODERN preserves existing Hyper Mode behavior. COLOSSEUM restricts entry to player-controlled Shadow Rush and uses Nature-weighted disobedience, confusion self-damage, eligible held-item use and automatic switching.")
                 .translation(key("hyperBehavior")).defineEnum("hyperBehavior", HyperBehavior.MODERN);
+        shadowMovesCanDisobey = builder.comment("Allow disobedience when a Pokemon already in Hyper Mode is ordered to use a Shadow move, including Shadow Rush. Uses the selected Hyper Mode behavior's usual disobedience rules.")
+                .translation(key("shadowMovesCanDisobey")).define("shadowMovesCanDisobey", false);
+        allowSimultaneousHyperAndReverse = builder.comment("Allow a Shadow Pokemon to enter Hyper Mode while in Reverse Mode or Reverse Mode while in Hyper Mode. Both modes must be enabled.")
+                .translation(key("allowSimultaneousHyperAndReverse")).define("allowSimultaneousHyperAndReverse", false);
         reverseEntry = builder.comment("NATURE preserves existing Reverse Mode entry rates. XD_SPECIES uses the original XD species groups, species overrides and the configurable fallback for other species.")
                 .translation(key("reverseEntry")).defineEnum("reverseEntry", ReverseEntry.NATURE);
         hyperItemRefusal = builder.comment("Shadow Pokemon in enabled Hyper Mode refuse ordinary directly applied items. Scents and healing facilities remain usable. Applies inside and outside battle.")
@@ -58,6 +63,8 @@ public final class ShadowBattleRulesConfig {
     public boolean unlimitedShadowPP() { return loaded() && unlimitedShadowPP.get(); }
     public boolean hyperShadowRushCrit() { return loaded() && hyperShadowRushCrit.get(); }
     public HyperBehavior hyperBehavior() { return loaded() ? hyperBehavior.get() : HyperBehavior.MODERN; }
+    public boolean shadowMovesCanDisobey() { return loaded() && shadowMovesCanDisobey.get(); }
+    public boolean allowSimultaneousHyperAndReverse() { return loaded() && allowSimultaneousHyperAndReverse.get(); }
     public ReverseEntry reverseEntry() { return loaded() ? reverseEntry.get() : ReverseEntry.NATURE; }
     public boolean hyperItemRefusal() { return loaded() && hyperItemRefusal.get(); }
     public boolean reverseItemRefusal() { return loaded() && reverseItemRefusal.get(); }
@@ -87,6 +94,8 @@ public final class ShadowBattleRulesConfig {
     public String modeRulesJson() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("hyperBehavior", hyperBehavior().name());
+        result.put("shadowMovesCanDisobey", shadowMovesCanDisobey());
+        result.put("allowSimultaneousHyperAndReverse", allowSimultaneousHyperAndReverse());
         result.put("reverseEntry", reverseEntry().name());
         result.put("reverseGaugeBands", java.util.Arrays.stream((loaded() ? reverseGaugeBands.get() : "99.9,80,60,40,20").split(",")).map(String::trim).map(Double::parseDouble).toList());
         result.put("reverseFallback", rates(loaded() ? reverseFallback.get() : "0,10,15,20,30,30"));

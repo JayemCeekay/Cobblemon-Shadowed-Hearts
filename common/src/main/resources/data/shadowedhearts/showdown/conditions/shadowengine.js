@@ -107,13 +107,14 @@
         return row[Math.max(0, Math.min(5, index))];
     },
     onBeforeMove(source, target, move) {
-        const config = this.dex.data.Scripts.shadowedhearts?.Config?.hyperMode || {enabled: false};
-        if (!config.enabled) return;
+        const config = this.dex.data.Scripts.shadowedhearts?.Config;
+        if (!config?.hyperMode?.enabled) return;
         if (!move || move.type !== 'Shadow') return;
         if (!source?.set?.isShadow) return;
-        if (this.dex.data.Scripts.shadowedhearts?.Config?.modeRules?.hyperBehavior === 'COLOSSEUM' &&
+        const rules = config.modeRules;
+        if (rules?.hyperBehavior === 'COLOSSEUM' &&
             (!source.set.playerControlled || move.id !== 'shadowrush' || source.shadowedheartsCalmedTurn === this.turn)) return;
-        if (source.volatiles['hypermode'] || source.volatiles['reversemode']) return;
+        if (source.volatiles['hypermode'] || (source.volatiles['reversemode'] && !rules?.allowSimultaneousHyperAndReverse)) return;
         const nat = (source.set.nature || '').toLowerCase();
         const engine = this.field.getPseudoWeather('shadowengine');
         const bars = engine.heartGaugeBars(source);
@@ -128,13 +129,14 @@
         }
     },
     onAfterMove(pokemon, target, move) {
-        const config = this.dex.data.Scripts.shadowedhearts?.Config?.reverseMode || {enabled: false};
-        if (!config.enabled) return;
+        const config = this.dex.data.Scripts.shadowedhearts?.Config;
+        if (!config?.reverseMode?.enabled) return;
         // XD checks the acting Shadow after its own move, regardless of move type.
         // AfterMove runs after attempted moves (including misses), but not when
         // sleep, flinching or another BeforeMove effect prevents the move entirely.
         if (!move || !pokemon?.set?.isShadow || pokemon.fainted || pokemon.hp <= 0) return;
-        if (pokemon.volatiles['hypermode'] || pokemon.volatiles['reversemode']) return;
+        const rules = config.modeRules;
+        if (pokemon.volatiles['reversemode'] || (pokemon.volatiles['hypermode'] && !rules?.allowSimultaneousHyperAndReverse)) return;
 
         const nat = (pokemon.set.nature || '').toLowerCase();
         const engine = this.field.getPseudoWeather('shadowengine');
@@ -142,7 +144,6 @@
         const table = engine.natureTableReverseMode;
         const row = table[nat];
         const idx = 5 - bars;
-        const rules = this.dex.data.Scripts.shadowedhearts?.Config?.modeRules;
         const pct = rules?.reverseEntry === 'XD_SPECIES' ? engine.xdReverseChance(pokemon, rules) : row ? row[idx] : 0;
 
         if (pct && this.random(100) < pct) {

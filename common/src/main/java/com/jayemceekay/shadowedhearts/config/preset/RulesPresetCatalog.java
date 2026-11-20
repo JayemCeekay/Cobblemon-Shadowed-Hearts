@@ -65,6 +65,8 @@ public final class RulesPresetCatalog {
         values.put("shadowBattleRules.hyperShadowRushCrit", !xd && !go);
         values.put("shadowBattleRules.hyperBehavior", !xd && !go
                 ? ShadowBattleRulesConfig.HyperBehavior.COLOSSEUM : ShadowBattleRulesConfig.HyperBehavior.MODERN);
+        values.put("shadowBattleRules.shadowMovesCanDisobey", false);
+        values.put("shadowBattleRules.allowSimultaneousHyperAndReverse", false);
         values.put("shadowBattleRules.reverseEntry", xd
                 ? ShadowBattleRulesConfig.ReverseEntry.XD_SPECIES : ShadowBattleRulesConfig.ReverseEntry.NATURE);
         values.put("shadowBattleRules.hyperItemRefusal", !xd && !go);

@@ -9,18 +9,28 @@ import com.jayemceekay.shadowedhearts.common.shadow.SHAspects
 
 /**
  * Custom instruction emitted by our Showdown patches to persist Hyper Mode outside battle.
- * Format: |hyper|start|PNX  or  |hyper|end|PNX
+ * Format: |hyper|start|PNX  or  |hyper|end|PNX[|UUID]
  */
 class HyperInstruction(private val message: BattleMessage) : InterpreterInstruction {
     override fun invoke(battle: PokemonBattle) {
         val action = message.argumentAt(0) ?: return
 
         val pnx = message.argumentAt(1) ?: return
+        val endedPokemonId = if (action == "end") message.argumentAt(2)?.takeIf { it.isNotBlank() } else null
 
         // Keep mode changes and Call in the same order as the battle actions.
         battle.dispatchGo {
-            val (_, active) = battle.getActorAndActiveSlotFromPNX(pnx)
-            val bp = active.battlePokemon ?: return@dispatchGo
+            // A queued faint can empty or replace the active slot before cleanup runs.
+            val bp = if (endedPokemonId != null) {
+                try {
+                    battle.getBattlePokemon(pnx, endedPokemonId)
+                } catch (_: IllegalStateException) {
+                    return@dispatchGo
+                }
+            } else {
+                val (_, active) = battle.getActorAndActiveSlotFromPNX(pnx)
+                active.battlePokemon ?: return@dispatchGo
+            }
 
             val effected = bp.effectedPokemon
             val original = bp.originalPokemon

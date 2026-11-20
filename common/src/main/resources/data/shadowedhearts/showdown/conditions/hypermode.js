@@ -3,14 +3,19 @@
     effectType: "VolatileStatus",
     noCopy: true,
     onStart(pokemon) {
-        const config = this.dex.data.Scripts.shadowedhearts?.Config?.hyperMode || {enabled: false};
-        if (!config.enabled || !pokemon?.set?.isShadow) return false;
-        if (this.dex.data.Scripts.shadowedhearts?.Config?.modeRules?.hyperBehavior === 'COLOSSEUM' && !pokemon.set.playerControlled) return false;
+        const config = this.dex.data.Scripts.shadowedhearts?.Config;
+        if (!config?.hyperMode?.enabled || !pokemon?.set?.isShadow) return false;
+        if (config.modeRules?.hyperBehavior === 'COLOSSEUM' && !pokemon.set.playerControlled) return false;
         pokemon.set.isHyper = true;
-        pokemon.set.isReverse = false;
         this.add('-start', pokemon, 'Hyper Mode');
-        if (pokemon.volatiles['reversemode']) {
-            pokemon.removeVolatile('reversemode');
+        if (!config.modeRules?.allowSimultaneousHyperAndReverse) {
+            if (pokemon.volatiles['reversemode']) {
+                pokemon.removeVolatile('reversemode');
+            } else if (pokemon.set.isReverse) {
+                // A dual-mode save can return after the server disables overlap.
+                pokemon.set.isReverse = false;
+                this.add('reverse', 'end', pokemon.getSlot(), pokemon.uuid);
+            }
         }
         if (this.turn && this.turn >= 1) {
             this.add('hyper', 'start', pokemon.getSlot());
@@ -40,16 +45,17 @@
             pokemon.set.isHyper = false;
             delete pokemon.volatiles['hypermode'];
             this.add('-end', pokemon, 'Hyper Mode');
-            this.add('hyper', 'end', pokemon.getSlot());
+            this.add('hyper', 'end', pokemon.getSlot(), pokemon.uuid);
         }
     },
     onBeforeMove(source, target, move) {
-        const config = this.dex.data.Scripts.shadowedhearts?.Config?.hyperMode || {enabled: false};
-        if (!config.enabled) return;
-        if (this.dex.data.Scripts.shadowedhearts?.Config?.modeRules?.hyperBehavior === 'COLOSSEUM') {
+        const config = this.dex.data.Scripts.shadowedhearts?.Config;
+        if (!config?.hyperMode?.enabled) return;
+        const rules = config.modeRules;
+        if (rules?.hyperBehavior === 'COLOSSEUM') {
             return this.dex.conditions.get('hypermode').colosseumAction.call(this, source, target, move);
         }
-        if (!move || move.type === 'Shadow') return;
+        if (!move || (move.type === 'Shadow' && !rules?.shadowMovesCanDisobey)) return;
         if (this.randomChance(9, 10)) {
             const outcomes = ['otherMove', 'attackAlly', 'selfHurt', 'heldItem', 'yellAtTrainer', 'returnBall'];
             const pick = outcomes[this.random(outcomes.length)];
@@ -163,7 +169,8 @@
             source.shadowedheartsCalmedTurn = this.turn;
             return;
         }
-        if (!move || move.id === 'shadowrush') return;
+        const rules = this.dex.data.Scripts.shadowedhearts?.Config?.modeRules;
+        if (!move || (move.id === 'shadowrush' && !rules?.shadowMovesCanDisobey)) return;
         const condition = this.dex.conditions.get('hypermode');
         const weights = condition.colosseumWeights(source.set.nature);
         let roll = this.random(100), outcome = 0;

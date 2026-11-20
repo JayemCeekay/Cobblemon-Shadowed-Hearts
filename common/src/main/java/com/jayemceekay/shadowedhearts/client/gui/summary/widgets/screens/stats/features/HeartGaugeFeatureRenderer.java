@@ -2,7 +2,7 @@ package com.jayemceekay.shadowedhearts.client.gui.summary.widgets.screens.stats.
 
 import com.cobblemon.mod.common.client.gui.summary.featurerenderers.BarSummarySpeciesFeatureRenderer;
 import com.cobblemon.mod.common.pokemon.Pokemon;
-import com.jayemceekay.shadowedhearts.PokemonAspectUtil;
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowHeartGauge;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -27,13 +27,13 @@ public class HeartGaugeFeatureRenderer extends BarSummarySpeciesFeatureRenderer 
     public HeartGaugeFeatureRenderer(Pokemon selectedPokemon) {
         super(
                 "heart_gauge",
-                Component.translatable("shadowedhearts.ui.stats.heart_gauge"),
+                Component.translatable("gui.shadowedhearts.stats.heart_gauge"),
                 BAR_TEXTURE,
                 OVERLAY_TEXTURE,
                 selectedPokemon,
                 0,
                 100,
-                Math.max(0, PokemonAspectUtil.getHeartGaugeValue(selectedPokemon)),
+                Math.max(0, ShadowHeartGauge.getHeartGaugeValue(selectedPokemon)),
                 new Vec3(129.0, 0.0, 255.0)
         );
         this.selectedPokemon = selectedPokemon;
@@ -42,8 +42,8 @@ public class HeartGaugeFeatureRenderer extends BarSummarySpeciesFeatureRenderer 
     @Override
     public boolean render(GuiGraphics guiGraphics, float x, float y, Pokemon pokemon) {
         // Recompute the current heart gauge value every frame so the bar updates live
-        // when server-side events (e.g., /shadow partysteps) modify the meter.
-        int current = Math.max(0, PokemonAspectUtil.getHeartGaugeValue(pokemon));
+        // when server-side events (e.g., /sh debug partysteps) modify the meter.
+        int current = Math.max(0, ShadowHeartGauge.getHeartGaugeValue(pokemon));
         super.renderElement(guiGraphics, x, y, pokemon, current);
         return true;
     }

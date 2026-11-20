@@ -7,11 +7,12 @@ import com.cobblemon.mod.common.pokemon.Pokemon
 import com.cobblemon.mod.common.util.DataKeys
 import com.cobblemon.mod.common.util.getPlayer
 import com.google.gson.JsonObject
-import com.jayemceekay.shadowedhearts.PokemonAspectUtil
-import com.jayemceekay.shadowedhearts.ShadowService
-import com.jayemceekay.shadowedhearts.client.net.storage.purification.PurificationChamberSyncPacket
+import com.jayemceekay.shadowedhearts.common.purification.ChamberLogic
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowAspectUtil
+import com.jayemceekay.shadowedhearts.network.purification.client.PurificationChamberSyncPacket
 import net.minecraft.core.RegistryAccess
 import net.minecraft.nbt.CompoundTag
+import net.minecraft.nbt.Tag
 import net.minecraft.server.level.ServerPlayer
 import java.util.*
 
@@ -26,6 +27,7 @@ class PurificationChamberStore(
 
     companion object {
         private const val SET_COUNT_KEY = "SetCount"
+        private const val STEP_ACCUMULATOR_KEY = "StepAccumulator"
         private const val SHADOW_KEY_PREFIX = "Set"
         private const val SHADOW_KEY_SUFFIX = "Shadow"
         private const val SUPPORT_KEY_SUFFIX = "Support"
@@ -44,7 +46,7 @@ class PurificationChamberStore(
     private val observingUUIDs = mutableSetOf(uuid)
     private val changeObservable = SimpleObservable<Unit>()
 
-    // Accumulate world steps; every 161 steps apply chamber purification per spec
+    // Accumulate world steps; every X steps apply chamber purification per spec
     private var stepAccumulator: Int = 0
 
     /**
@@ -105,6 +107,7 @@ class PurificationChamberStore(
                 p?.storeCoordinates?.set(StoreCoordinates(this, PurificationChamberPosition(setIndex, idx, false)))
             }
         }
+        rebuildPokemonByUuid()
     }
 
     override fun setAtPosition(position: PurificationChamberPosition, pokemon: Pokemon?) {
@@ -135,7 +138,7 @@ class PurificationChamberStore(
 
     override fun add(pokemon: Pokemon): Boolean {
         // Place based on shadow aspect constraint
-        val isShadow = PokemonAspectUtil.hasShadowAspect(pokemon)
+        val isShadow = ShadowAspectUtil.hasShadowAspect(pokemon)
         if (isShadow) {
             val pos = sets.indexOfFirst { it.shadow == null }
             if (pos >= 0) {
@@ -155,7 +158,7 @@ class PurificationChamberStore(
     }
 
     override fun set(position: PurificationChamberPosition, pokemon: Pokemon) {
-        val isShadow = PokemonAspectUtil.hasShadowAspect(pokemon)
+        val isShadow = ShadowAspectUtil.hasShadowAspect(pokemon)
         if (position.isShadow && !isShadow) {
             throw IllegalArgumentException("Support Pokémon cannot occupy shadow slot")
         }
@@ -165,17 +168,28 @@ class PurificationChamberStore(
         super.set(position, pokemon)
     }
 
+    /**
+     * Restore a captured original after a failed transfer. A just-purified Pokemon may still be
+     * in the center slot awaiting withdrawal, so restoring it must retain that original state.
+     * Ordinary incoming placements continue to use the shadow/support checks in set().
+     */
+    internal fun restoreAfterFailedTransfer(position: PurificationChamberPosition, pokemon: Pokemon) {
+        require(isValidPosition(position)) { "Invalid chamber restoration position" }
+        check(get(position) == null || get(position) === pokemon) { "Cannot overwrite a chamber slot during restoration" }
+        super.set(position, pokemon)
+    }
+
     override fun swap(position1: PurificationChamberPosition, position2: PurificationChamberPosition) {
         val p1 = get(position1)
         val p2 = get(position2)
 
         // Enforce constraints after swap
         if (p1 != null) {
-            val s1 = PokemonAspectUtil.hasShadowAspect(p1)
+            val s1 = ShadowAspectUtil.hasShadowAspect(p1)
             if (position2.isShadow != s1) return // invalid swap
         }
         if (p2 != null) {
-            val s2 = PokemonAspectUtil.hasShadowAspect(p2)
+            val s2 = ShadowAspectUtil.hasShadowAspect(p2)
             if (position1.isShadow != s2) return
         }
 
@@ -187,54 +201,30 @@ class PurificationChamberStore(
         return if (position.isShadow) set.shadow else set.supports.getOrNull(position.index)
     }
 
+    fun getShadow(setIndex: Int): Pokemon? = sets.getOrNull(setIndex)?.shadow
+
+    fun getSupports(setIndex: Int): Array<Pokemon?> = sets.getOrNull(setIndex)?.supports ?: arrayOfNulls(SUPPORT_SLOTS)
+
+    fun getSupportRing(setIndex: Int): List<Pokemon> = getSupports(setIndex).filterNotNull()
+
     /**
      * Advance the chamber's purification cadence by a given number of steps.
-     * Every 161 accumulated steps, compute and apply heart gauge reductions to each set's shadow.
+     * Every X accumulated steps, compute and apply heart gauge reductions to each set's shadow.
      * Server-side authority only.
      *
      * Context: Minecraft Cobblemon mod; all shadow/purity/corruption terms are gameplay mechanics.
      */
     fun advanceSteps(steps: Int) {
-        if (steps <= 0) return
-        stepAccumulator += steps
-        val affectedPokemon = mutableSetOf<Pokemon>()
-        while (stepAccumulator >= 161) {
-            stepAccumulator -= 161
-            applyChamberTick(affectedPokemon)
-        }
-        affectedPokemon.forEach { ShadowService.syncAll(it) }
-    }
-
-    /** Compute perfect-set count and apply purification delta to each shadow per formula. */
-    private fun applyChamberTick(affectedPokemon: MutableSet<Pokemon>? = null) {
-        // Count perfect sets first
-        val perfectCount = sets.count { set ->
-            val ring = set.supports.filterNotNull()
-            PurificationMath.isPerfectSet(ring)
-        }
-
-        // Apply per-set
-        var anyChanged = false
-        sets.forEach { set ->
-            val delta = PurificationMath.computePurificationDeltaForSet(set.shadow, set.supports, perfectCount)
-            if (delta != 0 && set.shadow != null) {
-                val p = set.shadow!!
-                val cur = PokemonAspectUtil.getHeartGaugeMeter(p)
-                val next = cur + delta // delta negative opens heart
-                if (affectedPokemon != null) {
-                    ShadowService.setHeartGauge(p, null, next, false)
-                    affectedPokemon.add(p)
-                } else {
-                    ShadowService.setHeartGauge(p, null, next)
-                }
-                anyChanged = true
-            }
-        }
-        if (anyChanged) changeObservable.emit(Unit)
+        val previous = stepAccumulator
+        stepAccumulator = ChamberLogic.advanceSteps(this, steps, previous)
+        // The file-backed store only saves observable changes. Notify after publishing
+        // the remainder, including partial progress that did not alter any Pokemon.
+        if (stepAccumulator != previous) touch()
     }
 
     override fun saveToNBT(nbt: CompoundTag, registryAccess: RegistryAccess): CompoundTag {
         nbt.putShort(SET_COUNT_KEY, sets.size.toShort())
+        nbt.putInt(STEP_ACCUMULATOR_KEY, stepAccumulator)
         sets.forEachIndexed { i, set ->
             set.shadow?.let {
                 nbt.put("${SHADOW_KEY_PREFIX}${i}${SHADOW_KEY_SUFFIX}", it.saveToNBT(registryAccess))
@@ -249,6 +239,9 @@ class PurificationChamberStore(
     }
 
     override fun loadFromNBT(nbt: CompoundTag, registryAccess: RegistryAccess): PokemonStore<PurificationChamberPosition> {
+        stepAccumulator = if (nbt.contains(STEP_ACCUMULATOR_KEY, Tag.TAG_INT.toInt())) {
+            nbt.getInt(STEP_ACCUMULATOR_KEY).coerceAtLeast(0)
+        } else 0
         val count = if (nbt.contains(SET_COUNT_KEY)) nbt.getShort(SET_COUNT_KEY).toInt() else SETS
         sets.clear()
         repeat(count) { sets.add(ChamberSet()) }
@@ -269,6 +262,7 @@ class PurificationChamberStore(
 
     override fun saveToJSON(json: JsonObject, registryAccess: RegistryAccess): JsonObject {
         json.addProperty(SET_COUNT_KEY, sets.size)
+        json.addProperty(STEP_ACCUMULATOR_KEY, stepAccumulator)
         sets.forEachIndexed { i, set ->
             set.shadow?.let { json.add("${SHADOW_KEY_PREFIX}${i}${SHADOW_KEY_SUFFIX}", it.saveToJSON(registryAccess)) }
             for (j in 0 until SUPPORT_SLOTS) {
@@ -279,6 +273,7 @@ class PurificationChamberStore(
     }
 
     override fun loadFromJSON(json: JsonObject, registryAccess: RegistryAccess): PokemonStore<PurificationChamberPosition> {
+        stepAccumulator = readStepAccumulator(json)
         val count = if (json.has(SET_COUNT_KEY)) json.get(SET_COUNT_KEY).asInt else SETS
         sets.clear()
         repeat(count) { sets.add(ChamberSet()) }
@@ -295,6 +290,18 @@ class PurificationChamberStore(
             }
         }
         return this
+    }
+
+    private fun readStepAccumulator(json: JsonObject): Int {
+        val value = json.get(STEP_ACCUMULATOR_KEY) ?: return 0
+        if (!value.isJsonPrimitive || !value.asJsonPrimitive.isNumber) return 0
+        return try {
+            value.asBigDecimal.intValueExact().coerceAtLeast(0)
+        } catch (_: ArithmeticException) {
+            0
+        } catch (_: NumberFormatException) {
+            0
+        }
     }
 
     override fun savePositionToNBT(position: PurificationChamberPosition, nbt: CompoundTag) {

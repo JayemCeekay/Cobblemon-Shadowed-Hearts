@@ -1,12 +1,12 @@
 package com.jayemceekay.shadowedhearts.client.network
 
 import com.cobblemon.mod.common.api.net.ClientNetworkPacketHandler
-import com.jayemceekay.shadowedhearts.client.gui.AuraScannerHUD
-import com.jayemceekay.shadowedhearts.network.AuraScannerS2CPacket
+import com.jayemceekay.shadowedhearts.client.aura.reader.AuraReaderClientState
+import com.jayemceekay.shadowedhearts.network.aura.AuraScannerS2CPacket
 import net.minecraft.client.Minecraft
 
 object AuraScannerClientHandler : ClientNetworkPacketHandler<AuraScannerS2CPacket> {
     override fun handle(packet: AuraScannerS2CPacket, client: Minecraft) {
-        AuraScannerHUD.setActive(packet.active)
+        AuraReaderClientState.setActive(packet.active)
     }
 }

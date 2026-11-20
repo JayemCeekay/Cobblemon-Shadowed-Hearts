@@ -1,26 +1,41 @@
 package com.jayemceekay.shadowedhearts.mixin;
 
-import com.cobblemon.mod.common.api.battles.model.actor.BattleActor;
+import com.cobblemon.mod.common.api.battles.model.PokemonBattle;
 import com.cobblemon.mod.common.battles.BattleCaptureAction;
-import com.cobblemon.mod.common.battles.PassActionResponse;
-import com.jayemceekay.shadowedhearts.SHAspects;
-import kotlin.Unit;
+import com.jayemceekay.shadowedhearts.common.shadow.SHAspects;
+import com.jayemceekay.shadowedhearts.common.snag.SnagBattleActions;
+import com.jayemceekay.shadowedhearts.common.snag.SnagCaptureProvenance;
+import com.jayemceekay.shadowedhearts.integration.mega_showdown.MegaShowdownBridgeHolder;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(value = BattleCaptureAction.class)
+@Mixin(value = BattleCaptureAction.class, remap = false)
 public class MixinBattleCaptureAction {
 
-    @Inject(method = "attach$lambda$3", at = @At(value = "INVOKE", target = "Lcom/cobblemon/mod/common/api/battles/model/PokemonBattle;writeShowdownAction([Ljava/lang/String;)V", shift = At.Shift.AFTER), require = 0, remap = false)
-    private static void shadowedhearts$attachLambda5Head(BattleCaptureAction this$0, Boolean successful, CallbackInfoReturnable<Unit> cir) {
-        if (successful) {
-            if (this$0.getTargetPokemon().getBattlePokemon().getEffectedPokemon().getAspects().contains(SHAspects.SHADOW)) {
-                BattleActor npcActor = this$0.getTargetPokemon().getActor();
-                int capturedIndex = this$0.getTargetPokemon().getDigit(true) - 1;
-                npcActor.getResponses().set(capturedIndex, PassActionResponse.INSTANCE);
-            }
+    @Inject(method = "attach", at = @At("HEAD"))
+    private void shadowedhearts$rememberSnagOrigin(CallbackInfo ci) {
+        SnagCaptureProvenance.recordAttempt((BattleCaptureAction) (Object) this);
+    }
+
+    @WrapOperation(method = "attach$lambda$3", require = 0, at = @At(value = "INVOKE",
+            target = "Lcom/cobblemon/mod/common/api/battles/model/PokemonBattle;writeShowdownAction([Ljava/lang/String;)V"))
+    private static void shadowedhearts$sendCapture(PokemonBattle battle, String[] messages, Operation<Void> original,
+                                                   @Local(argsOnly = true) BattleCaptureAction action) {
+        var member = action.getTargetPokemon().getBattlePokemon();
+        if (member == null || !member.getEffectedPokemon().getAspects().contains(SHAspects.SHADOW)) {
+            original.call(battle, messages);
+            return;
         }
+        // Cobblemon has marked the member gone. A final capture can end the battle before another dispatch.
+        for (var actor : battle.getActors()) {
+            SnagBattleActions.cancelCapturedChoices(actor);
+        }
+        original.call(battle, messages);
+        MegaShowdownBridgeHolder.INSTANCE.revertMegaShowdownAspects(member.getEffectedPokemon());
     }
 }

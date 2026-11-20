@@ -4,28 +4,31 @@ import com.cobblemon.mod.common.entity.pokeball.EmptyPokeBallEntity;
 import com.jayemceekay.shadowedhearts.Shadowedhearts;
 import com.jayemceekay.shadowedhearts.client.ModKeybinds;
 import com.jayemceekay.shadowedhearts.client.ModShaders;
-import com.jayemceekay.shadowedhearts.client.aura.AuraEmitters;
-import com.jayemceekay.shadowedhearts.client.aura.AuraPulseRenderer;
+import com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraEmitters;
+import com.jayemceekay.shadowedhearts.client.aura.reader.AuraReaderInputHandler;
+import com.jayemceekay.shadowedhearts.client.aura.reader.AuraReaderHud;
+import com.jayemceekay.shadowedhearts.client.aura.reader.AuraReaderPulseRenderer;
+import com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowPokemonAuraSystem;
 import com.jayemceekay.shadowedhearts.client.ball.BallEmitters;
-import com.jayemceekay.shadowedhearts.client.gui.AuraScannerHUD;
+import com.jayemceekay.shadowedhearts.client.fabric.model.ShadowedHeartsObjModels;
 import com.jayemceekay.shadowedhearts.client.particle.LuminousMoteEmitters;
 import com.jayemceekay.shadowedhearts.client.particle.LuminousMoteParticle;
+import com.jayemceekay.shadowedhearts.client.particle.PenumbraTrailSystem;
+import com.jayemceekay.shadowedhearts.client.particle.PenumbraTrailParticle;
 import com.jayemceekay.shadowedhearts.client.particle.RelicStoneMoteParticle;
 import com.jayemceekay.shadowedhearts.client.render.DepthCapture;
-import com.jayemceekay.shadowedhearts.client.render.HeldBallSnagGlowRenderer;
+import com.jayemceekay.shadowedhearts.client.render.VanillaWorldShaderFrame;
 import com.jayemceekay.shadowedhearts.client.sound.RelicStoneSoundManager;
 import com.jayemceekay.shadowedhearts.config.ClientConfig;
-import com.jayemceekay.shadowedhearts.config.ShadowedHeartsConfigs;
-import com.jayemceekay.shadowedhearts.core.ModBlocks;
-import com.jayemceekay.shadowedhearts.core.ModItems;
-import com.jayemceekay.shadowedhearts.core.ModParticleTypes;
+import com.jayemceekay.shadowedhearts.config.ConfigLifecycle;
+import com.jayemceekay.shadowedhearts.content.items.ScentItem;
 import com.jayemceekay.shadowedhearts.fabric.net.ShadowedHeartsFabricNetworkManager;
-import com.jayemceekay.shadowedhearts.items.ScentItem;
-import com.jayemceekay.shadowedhearts.util.HeldItemAnchorCache;
-import com.mojang.blaze3d.vertex.PoseStack;
-import dev.felnull.specialmodelloader.api.event.SpecialModelLoaderEvents;
+import com.jayemceekay.shadowedhearts.registry.ModBlocks;
+import com.jayemceekay.shadowedhearts.registry.ModItems;
+import com.jayemceekay.shadowedhearts.registry.util.ModParticleTypes;
 import fuzs.forgeconfigapiport.fabric.api.neoforge.v4.NeoForgeConfigRegistry;
 import fuzs.forgeconfigapiport.fabric.api.neoforge.v4.NeoForgeModConfigEvents;
+import fuzs.forgeconfigapiport.fabric.api.neoforge.v4.client.ConfigScreenFactoryRegistry;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.blockrenderlayer.v1.BlockRenderLayerMap;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
@@ -36,51 +39,64 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
-import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.config.ModConfig.Type;
+import com.jayemceekay.shadowedhearts.client.gui.ShadowedHeartsConfigScreen;
 
 public final class ShadowedheartsFabricClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        NeoForgeModConfigEvents.loading(Shadowedhearts.MOD_ID).register(config ->
+                ConfigLifecycle.loadClient(config.getSpec(), config::getFullPath));
+        NeoForgeModConfigEvents.reloading(Shadowedhearts.MOD_ID).register(config ->
+                ConfigLifecycle.loadClient(config.getSpec(), config::getFullPath));
+        // FCAP loads client configs synchronously during registration, so listeners must exist first.
         NeoForgeConfigRegistry.INSTANCE.register(Shadowedhearts.MOD_ID, Type.CLIENT, ClientConfig.SPEC, "shadowedhearts/client.toml");
-        NeoForgeModConfigEvents.loading(Shadowedhearts.MOD_ID).register(config -> {
-            if (config.getSpec() == ClientConfig.SPEC) {
-                ShadowedHeartsConfigs.getInstance().getClientConfig().load();
-            }
-        });
-        NeoForgeModConfigEvents.reloading(Shadowedhearts.MOD_ID).register(config -> {
-            if (config.getSpec() == ClientConfig.SPEC) {
-                ShadowedHeartsConfigs.getInstance().getClientConfig().load();
-            }
-        });
+        ConfigScreenFactoryRegistry.INSTANCE.register(Shadowedhearts.MOD_ID, (modId, parent) ->
+                new ShadowedHeartsConfigScreen(parent));
         // Register client-side handlers for our Cobblemon-style packets
         ShadowedHeartsFabricNetworkManager.registerClientHandlers();
         // Client-side common init
-        AuraEmitters.init();
-        AuraPulseRenderer.init();
+        ShadowAuraEmitters.init();
+        AuraReaderPulseRenderer.init();
         DepthCapture.init();
         ModShaders.initClient();
         ModShadersPlatformImpl.registerShaders();
         // Register keybinds
         ModKeybinds.init();
         ModKeybindsPlatformImpl.register(ModKeybinds.AURA_SCANNER);
+        ModKeybindsPlatformImpl.register(ModKeybinds.AURA_READER_HELP);
         ModKeybindsPlatformImpl.register(ModKeybinds.AURA_PULSE);
+        ModKeybindsPlatformImpl.register(ModKeybinds.AURA_LOCK);
+        ModKeybindsPlatformImpl.register(ModKeybinds.AURA_NEXT_SIGNAL);
+        ModKeybindsPlatformImpl.register(ModKeybinds.AURA_PREV_SIGNAL);
+        ModKeybindsPlatformImpl.register(ModKeybinds.DEBUG_REINIT_HUD);
+        ModKeybindsPlatformImpl.register(ModKeybinds.RESCUE_WELCOME);
+        ModKeybindsPlatformImpl.register(ModKeybinds.RESCUE_RELEASE);
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            AuraScannerHUD.tick();
-            AuraPulseRenderer.tick();
+            BallEmitters.onClientTick(client);
+            com.jayemceekay.shadowedhearts.client.voidshadow.VoidShadowTransitions.tick(client);
+            AuraReaderInputHandler.tick(client);
+            AuraReaderPulseRenderer.tick();
             RelicStoneSoundManager.tick();
         });
-        HudRenderCallback.EVENT.register((guiGraphics, tickCounter) -> AuraScannerHUD.render(guiGraphics, tickCounter.getGameTimeDeltaPartialTick(true)));
+        HudRenderCallback.EVENT.register(AuraReaderHud::render);
+        HudRenderCallback.EVENT.register((graphics, delta) ->
+                com.jayemceekay.shadowedhearts.client.moonwound.MoonwoundClient.renderHud(graphics));
+        // Screens
 
-        // Special Model Loader registration
-        SpecialModelLoaderEvents.LOAD_SCOPE.register(() -> (resourceManager, location) -> Shadowedhearts.MOD_ID.equals(location.getNamespace()));
+        ShadowedHeartsObjModels.register();
 
-        // Set RenderType for Relic Stone
+        // Blocks with transparent texture cutouts.
         BlockRenderLayerMap.INSTANCE.putBlock(ModBlocks.RELIC_STONE.get(), RenderType.cutout());
+        BlockRenderLayerMap.INSTANCE.putBlock(ModBlocks.SHADOW_RESIDUE.get(), RenderType.cutout());
+        BlockRenderLayerMap.INSTANCE.putBlock(ModBlocks.SHADOW_GEM_CLUSTER.get(), RenderType.cutout());
 
         com.jayemceekay.shadowedhearts.client.ShadowedHeartsClient.init();
+        com.jayemceekay.shadowedhearts.client.UmbraInfuserClient.registerScreen();
+        com.jayemceekay.shadowedhearts.client.UmbraInfuserClient.registerRenderer();
+        com.jayemceekay.shadowedhearts.client.UmbrafallCoreClient.registerRenderer();
 
         net.fabricmc.fabric.api.client.rendering.v1.LivingEntityFeatureRendererRegistrationCallback.EVENT.register(
             (entityType, renderer, helper, context) -> {
@@ -116,67 +132,46 @@ public final class ShadowedheartsFabricClient implements ClientModInitializer {
                 ModParticleTypes.RELIC_STONE_MOTE.get(),
                 RelicStoneMoteParticle.Provider::new
         );
+        ParticleFactoryRegistry.getInstance().register(
+                ModParticleTypes.PENUMBRA_TRAIL.get(),
+                PenumbraTrailParticle.Provider::new
+        );
+        ParticleFactoryRegistry.getInstance().register(
+                ModParticleTypes.VOID_SHADOW_CLOUD.get(),
+                com.jayemceekay.shadowedhearts.client.particle.VoidShadowCloudParticle.Provider::new
+        );
 
         // Subscribe luminous mote emitters to Cobblemon events
         LuminousMoteEmitters.init();
 
+        WorldRenderEvents.START.register(context -> VanillaWorldShaderFrame.beginFrame());
+
         WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> {
-            AuraEmitters.onRender(context.camera(), context.camera().getPartialTickTime());
+            ShadowAuraEmitters.onRender(context.camera(), context.camera().getPartialTickTime());
             BallEmitters.onRender(context.camera(), context.camera().getPartialTickTime());
+            // Capture scene depth before Fabulous' transparency combine overwrites it.
+            PenumbraTrailSystem.renderWorldDensityOnly(context.camera(), context.camera().getPartialTickTime(),
+                    context.projectionMatrix(), context.positionMatrix());
+            ShadowPokemonAuraSystem.renderWorldDensityOnly(
+                    context.camera(), context.camera().getPartialTickTime(),
+                    context.projectionMatrix(), context.positionMatrix());
+            VanillaWorldShaderFrame.capture(context.camera(), context.camera().getPartialTickTime(),
+                    context.projectionMatrix(), context.positionMatrix());
         });
 
         WorldRenderEvents.END.register(worldRenderContext -> {
-            if ((AuraPulseRenderer.IRIS_HANDLER == null || !AuraPulseRenderer.IRIS_HANDLER.isShaderPackInUse())) {
-                AuraPulseRenderer.onRenderWorld(worldRenderContext.camera(), worldRenderContext.projectionMatrix(), worldRenderContext.positionMatrix(), worldRenderContext.camera().getPartialTickTime());
-            }
+            PenumbraTrailSystem.compositeWorld();
+            ShadowPokemonAuraSystem.compositeWorld();
+            VanillaWorldShaderFrame.render();
         });
 
-        WorldRenderEvents.AFTER_ENTITIES.register(context -> LuminousMoteEmitters.onRender(context.tickCounter().getGameTimeDeltaPartialTick(true)));
+        WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+            LuminousMoteEmitters.onRender(context.tickCounter().getGameTimeDeltaPartialTick(true));
 
-        WorldRenderEvents.LAST.register(context -> {
-            var mc = Minecraft.getInstance();
-            if (mc.level == null) return;
-
-            PoseStack pose = context.matrixStack();
-            var buffers = mc.renderBuffers().bufferSource();
-            float pt = context.tickCounter().getGameTimeDeltaPartialTick(true);
-
-            // "frame id" so we only use anchors captured this same frame
-            int frameId = (int) (System.nanoTime() & 0x7fffffff);
-            Vec3 view = context.camera().getPosition();
-
-            pose.pushPose();
-            pose.translate(-view.x, -view.y, -view.z);
-
-            for (var p : mc.level.players()) {
-                var a = HeldItemAnchorCache.get(p, frameId);
-                if (a == null) continue;
-
-                pose.pushPose();
-                pose.translate(a.worldPos().x, a.worldPos().y, a.worldPos().z);
-                pose.mulPose(mc.getEntityRenderDispatcher().cameraOrientation());
-
-                if (p == mc.player && !mc.options.getCameraType().isFirstPerson()) {
-                    if (!HeldBallSnagGlowRenderer.isPokeball(p.getMainHandItem()))
-                        continue;
-                    HeldBallSnagGlowRenderer.renderAtHandPoseThirdPerson(pt, pose, buffers);
-                }
-
-                if (p != mc.player) {
-                    if (!HeldBallSnagGlowRenderer.isPokeball(p.getMainHandItem()))
-                        continue;
-                    HeldBallSnagGlowRenderer.renderAtHandPoseThirdPerson(pt, pose, buffers);
-                }
-
-                pose.popPose();
-            }
-
-            pose.popPose();
-            buffers.endBatch();
         });
 
         ClientEntityEvents.ENTITY_UNLOAD.register((entity, clientLevel) -> {
-            AuraEmitters.onPokemonDespawn(entity.getId());
+            ShadowAuraEmitters.onPokemonDespawn(entity.getId());
             if (entity instanceof EmptyPokeBallEntity) {
                 BallEmitters.onEntityDespawn(entity.getId());
             }

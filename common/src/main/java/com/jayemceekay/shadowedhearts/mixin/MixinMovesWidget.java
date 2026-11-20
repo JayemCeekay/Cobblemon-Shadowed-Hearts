@@ -1,12 +1,15 @@
 package com.jayemceekay.shadowedhearts.mixin;
 
+import com.jayemceekay.shadowedhearts.common.shadow.restrictions.ShadowUnlockPolicy;
+
 import com.cobblemon.mod.common.api.moves.Move;
+import com.cobblemon.mod.common.client.gui.summary.widgets.screens.moves.MoveDescriptionScrollList;
 import com.cobblemon.mod.common.client.gui.summary.widgets.screens.moves.MoveSlotWidget;
 import com.cobblemon.mod.common.client.gui.summary.widgets.screens.moves.MovesWidget;
 import com.cobblemon.mod.common.pokemon.Pokemon;
-import com.jayemceekay.shadowedhearts.PokemonAspectUtil;
-import com.jayemceekay.shadowedhearts.ShadowGate;
-import com.llamalad7.mixinextras.sugar.Local;
+import com.jayemceekay.shadowedhearts.common.shadow.battle.ShadowBattleClientState;
+import com.jayemceekay.shadowedhearts.common.shadow.restrictions.ShadowRestrictionPolicy;
+import com.jayemceekay.shadowedhearts.client.gui.ShadowMaskingUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import org.jetbrains.annotations.NotNull;
@@ -20,59 +23,69 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(value = com.cobblemon.mod.common.client.gui.summary.widgets.screens.moves.MovesWidget.class)
+@Mixin(value = MovesWidget.class, remap = false)
 public abstract class MixinMovesWidget {
 
     @Shadow
     public abstract @Nullable Move getSelectedMove();
 
+    @Shadow private MoveDescriptionScrollList descriptionScrollList;
+    @Unique private Move shadowedhearts$describedMove;
+    @Unique private boolean shadowedhearts$descriptionMasked;
+
     @Unique
     private boolean shadowedhearts$shouldMask(Move m, Pokemon pokemon) {
-        if (m == null || pokemon == null) return false;
-        if (ShadowGate.isShadowMoveId(m.getName())) return false; // Shadow moves always visible
-
-        // Compute this move's index among non-Shadow moves in move order
-        int nonShadowIndex = 0;
-        int allowed = PokemonAspectUtil.getAllowedVisibleNonShadowMoves(pokemon);
-        for (var mv : pokemon.getMoveSet().getMovesWithNulls()) {
-            if (mv == null) continue;
-            if (ShadowGate.isShadowMoveId(mv.getName())) continue;
-            if (mv == m) {
-                // If this move's position is at or beyond allowed, mask it
-                return nonShadowIndex >= allowed;
-            }
-            nonShadowIndex++;
-        }
-        return false;
+        return ShadowUnlockPolicy.shouldMaskMove(pokemon, m);
     }
 
-    @Inject(method = "reorderMove", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "reorderMove", remap = false, at = @At("HEAD"), cancellable = true)
     private void shadowedhearts$disableReorder(
             MoveSlotWidget move, boolean up, CallbackInfo ci
     ) {
         var pokemon = ((MovesWidget)(Object)this).getSummary().getSelectedPokemon$common();
-        if (ShadowGate.isShadowLockedClient(pokemon)) {
+        if (ShadowRestrictionPolicy.blocksMoveChanges(pokemon)) {
             ci.cancel();
         }
     }
 
     @ModifyArg(method = "selectMove", at = @At(value = "INVOKE", target = "Lcom/cobblemon/mod/common/client/gui/summary/widgets/screens/moves/MoveDescriptionScrollList;setMoveDescription(Lnet/minecraft/network/chat/MutableComponent;)V"))
     private @NotNull MutableComponent shadowedhearts$maskMoveDescription(
-            @NotNull MutableComponent moveDescription,
-            @Local(argsOnly = true) Move move
+            @NotNull MutableComponent moveDescription
     ) {
         var pokemon = ((MovesWidget)(Object)this).getSummary().getSelectedPokemon$common();
-        if (shadowedhearts$shouldMask(move, pokemon)) {
-            return Component.literal("?????");
+        shadowedhearts$describedMove = getSelectedMove();
+        shadowedhearts$descriptionMasked = shadowedhearts$shouldMask(shadowedhearts$describedMove, pokemon);
+        if (shadowedhearts$descriptionMasked) {
+            return ShadowMaskingUtil.MASKED_DESC;
         }
         return moveDescription;
+    }
+
+    @Inject(method = "renderWidget", at = @At("HEAD"))
+    private void shadowedhearts$refreshDescriptionAfterVisibilityChange(CallbackInfo ci) {
+        Move selected = getSelectedMove();
+        var pokemon = ((MovesWidget)(Object)this).getSummary().getSelectedPokemon$common();
+        boolean masked = shadowedhearts$shouldMask(selected, pokemon);
+        if (selected == shadowedhearts$describedMove && masked == shadowedhearts$descriptionMasked) return;
+
+        // Rebuild only when visibility changes so scrolling is preserved during normal rendering.
+        descriptionScrollList.setMoveDescription(selected == null ? Component.empty()
+                : masked ? ShadowMaskingUtil.MASKED_DESC
+                : selected.getDescription());
+        shadowedhearts$describedMove = selected;
+        shadowedhearts$descriptionMasked = masked;
     }
 
     @ModifyVariable(method = "renderWidget(Lnet/minecraft/client/gui/GuiGraphics;IIF)V", at = @At(value = "STORE"), name = "movePower")
     private MutableComponent shadowedhearts$maskMovePower(MutableComponent value) {
         var pokemon = ((MovesWidget)(Object)this).getSummary().getSelectedPokemon$common();
         if (shadowedhearts$shouldMask(getSelectedMove(), pokemon)) {
-            return Component.literal("???");
+            return ShadowMaskingUtil.MASKED_VAL;
+        }
+        var rules = ShadowBattleClientState.INSTANCE.current();
+        Move selected = getSelectedMove();
+        if (rules != null && rules.colosseumRush() && selected != null && "shadowrush".equalsIgnoreCase(selected.getName())) {
+            return Component.literal("90");
         }
         return value;
     }
@@ -81,7 +94,7 @@ public abstract class MixinMovesWidget {
     private MutableComponent shadowedhearts$maskMoveAccuracy(MutableComponent value) {
         var pokemon = ((MovesWidget)(Object)this).getSummary().getSelectedPokemon$common();
         if (shadowedhearts$shouldMask(getSelectedMove(), pokemon)) {
-            return Component.literal("???");
+            return ShadowMaskingUtil.MASKED_VAL;
         }
         return value;
     }
@@ -90,7 +103,7 @@ public abstract class MixinMovesWidget {
     private MutableComponent shadowedhearts$maskMoveEffect(MutableComponent value) {
         var pokemon = ((MovesWidget)(Object)this).getSummary().getSelectedPokemon$common();
         if (shadowedhearts$shouldMask(getSelectedMove(), pokemon)) {
-            return Component.literal("???");
+            return ShadowMaskingUtil.MASKED_VAL;
         }
         return value;
     }

@@ -45,6 +45,49 @@
       }
     ]
   },
+  "moonwound_ambient_loop": {
+    "subtitle": "subtitles.shadowedhearts.moonwound_ambient_loop",
+    "sounds": [
+      {
+        "name": "shadowedhearts:moonwound_ambient_loop",
+        "stream": false,
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "moonwound_open": {
+    "subtitle": "subtitles.shadowedhearts.moonwound_open",
+    "sounds": [
+      {
+        "name": "shadowedhearts:moonwound_open",
+        "stream": false,
+        "preload": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "void_shadow_transform": {
+    "subtitle": "subtitles.shadowedhearts.void_shadow_transform",
+    "sounds": [
+      {
+        "name": "shadowedhearts:void_shadow_transform",
+        "stream": false,
+        "preload": true,
+        "attenuation_distance": 32
+      }
+    ]
+  },
+  "shadow_signal_search": {
+    "subtitle": "subtitles.shadowedhearts.shadow_signal_search",
+    "sounds": [
+      {
+        "name": "shadowedhearts:shadow_signal_search",
+        "stream": false,
+        "preload": true
+      }
+    ]
+  },
   "aura_reader_equip": {
     "subtitle": "subtitles.shadowedhearts.aura_reader_equip",
     "sounds": [

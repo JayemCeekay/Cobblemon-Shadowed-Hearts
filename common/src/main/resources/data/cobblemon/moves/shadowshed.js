@@ -17,6 +17,7 @@
     },
     target: "foeSide",
     type: "Shadow",
+    zMove: {boost: {atk: 1}},
     contestType: "Tough",
     isNonstandard: "Custom",
     onHitSide(side, source, move) {

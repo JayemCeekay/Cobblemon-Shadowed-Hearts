@@ -1,0 +1,47 @@
+# Contributing to Shadowed Hearts
+
+Bug reports, translations, gameplay feedback, and pull requests are welcome. Search the [issue tracker](https://github.com/JayemCeekay/shadowedhearts/issues) to see whether someone has already reported what you found.
+
+## Report a bug or suggest a feature
+
+- Give your **Shadowed Hearts, Cobblemon, Minecraft, and loader versions**. Include the version of any add-on involved.
+- Say where it happened (singleplayer, LAN, or a dedicated server), what you did, what you expected, and what happened instead.
+- For a crash, attach the crash report or the relevant section of `logs/latest.log`. For a visual issue, a screenshot and the name of any shader pack help.
+
+For a feature request, describe the player or server-owner experience you want to improve. An example from your world or modpack helps others understand the proposal.
+
+## Set up a development checkout
+
+Fork the repository and clone your fork. For work on the 2.0 release, create your topic branch from upstream’s `2.0.0` branch. Install a JDK 21 and select it as your Gradle JVM if you import the project into an IDE. Minecraft, Cobblemon, and loader versions are pinned in [gradle.properties](gradle.properties).
+
+Build both loader jars from the repository root. The Gradle wrapper downloads Gradle and project dependencies on the first build.
+
+| What to run | Windows PowerShell | macOS and Linux |
+| --- | --- | --- |
+| Build both loaders | `.\gradlew.bat :fabric:build :neoforge:build` | `sh gradlew :fabric:build :neoforge:build` |
+| Launch a Fabric client | `.\gradlew.bat :fabric:runClient` | `sh gradlew :fabric:runClient` |
+| Launch a NeoForge client | `.\gradlew.bat :neoforge:runClient` | `sh gradlew :neoforge:runClient` |
+
+The installable jars appear in `fabric/build/libs/` and `neoforge/build/libs/`. Choose the file named `ShadowedHearts-<loader>-<version>.jar`.
+
+## Publish a release
+
+Set `mod_version` and `mod_release_type` (`ALPHA`, `BETA`, or `STABLE`) in `gradle.properties`. Put the player-facing release notes in `docs/changelogs/<mod_version>-modrinth-curseforge.md`. Both sites use that file. The loader and site dependency lists are in [gradle/publishing.gradle](gradle/publishing.gradle).
+
+Run `.\gradlew.bat publishMods` (or `sh gradlew publishMods`) to preview the release. By default the plugin logs the four destinations and stages the production jars in `build/publishMods/`. This works without publishing tokens.
+
+To enable tag publishing, add the CurseForge author token and Modrinth version-publishing token as GitHub Actions secrets named `CURSEFORGE_TOKEN` and `MODRINTH_TOKEN`. Pushing a tag matching `v<mod_version>` starts four independent jobs, one per site and loader.
+
+If a job fails, check whether the site already has that version for that loader. If the file is missing, re-run its job in GitHub Actions (for example, **Publish NeoForge to Modrinth**). To retry locally, check out the release tag and run the matching task with the site's token in your environment, for example `.\gradlew.bat publishModrinthNeoForge -PpublishLive=true`.
+
+## Find the right place for a change
+
+- [common/src/main](common/src/main) contains the Java and Kotlin gameplay code, shared client code, and resources used by both loaders. For a translation, use [en_us.json](common/src/main/resources/assets/shadowedhearts/lang/en_us.json) as the key reference and preserve any placeholders in the strings.
+- [fabric/src/main](fabric/src/main) and [neoforge/src/main](neoforge/src/main) contain each loader’s entry points, event hooks, and platform-specific resources.
+- The [example Shadow learnset datapack](datapacks/shadowedhearts-shadow-learnsets/README.md) shows how to add Shadow moves to a species through data.
+
+Keep existing registry IDs, advancement IDs, and saved-data keys stable. If a change needs a new format, describe how existing worlds will load it.
+
+## Open a pull request
+
+Keep the diff focused on one change. Describe the old and new behavior, link any related issue, and list the checks you ran. For a gameplay fix, replay the reported steps and give the observed result and loader. For a multiplayer fix, mention which side you tested and whether a second player saw the expected behavior. Screenshots are especially helpful for interface, model, and aura changes.

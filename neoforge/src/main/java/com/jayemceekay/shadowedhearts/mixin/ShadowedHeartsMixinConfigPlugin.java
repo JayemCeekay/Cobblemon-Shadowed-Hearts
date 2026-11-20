@@ -1,8 +1,11 @@
 package com.jayemceekay.shadowedhearts.mixin;
 
+import com.jayemceekay.shadowedhearts.common.moonwound.raid.MoonwoundRaidCompatibility;
+import com.jayemceekay.shadowedhearts.integration.BattleExtrasCompatibility;
+import com.jayemceekay.shadowedhearts.integration.MidBattleExpCompatibility;
+import com.jayemceekay.shadowedhearts.integration.yacl.YaclCompatibility;
+import com.jayemceekay.shadowedhearts.integration.CraterSosCompatibility;
 import net.neoforged.fml.loading.FMLLoader;
-import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
-import org.apache.maven.artifact.versioning.VersionRange;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -15,6 +18,38 @@ public class ShadowedHeartsMixinConfigPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.equals(MidBattleExpCompatibility.MIXIN)) {
+            return FMLLoader.getLoadingModList().getMods().stream().anyMatch(mod ->
+                    mod.getModId().equals(MidBattleExpCompatibility.MOD_ID)
+                            && MidBattleExpCompatibility.VERSION.equals(mod.getVersion().toString()));
+        }
+        if (mixinClassName.startsWith(BattleExtrasCompatibility.MIXIN_PACKAGE)) {
+            return FMLLoader.getLoadingModList().getMods().stream().anyMatch(mod -> mod.getModId().equals("cobblemon_battle_extras")
+                    && BattleExtrasCompatibility.VERSION.equals(mod.getVersion().toString()));
+        }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.sos.")) {
+            return FMLLoader.getLoadingModList().getMods().stream().anyMatch(mod -> mod.getModId().equals(CraterSosCompatibility.MOD_ID)
+                    && (mixinClassName.endsWith(".MixinCraterSosEligibility") || CraterSosCompatibility.supports(mod.getVersion().toString())));
+        }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.horde.")) {
+            return FMLLoader.getLoadingModList().getModFileById("hordeencounters") != null
+                    && FMLLoader.getLoadingModList().getModFileById("asymmetricbattles") != null;
+        }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.yacl.")) {
+            return FMLLoader.getLoadingModList().getMods().stream().anyMatch(mod -> mod.getModId().equals(YaclCompatibility.MOD_ID)
+                    && YaclCompatibility.supportsHeadingLayout(mod.getVersion().toString()));
+        }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.emi.")) {
+            return FMLLoader.getLoadingModList().getModFileById("emi") != null;
+        }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.rctapi.")) {
+            return FMLLoader.getLoadingModList().getModFileById("rctapi") != null;
+        }
+        if (mixinClassName.startsWith("com.jayemceekay.shadowedhearts.mixin.raiddens.")) {
+            return FMLLoader.getLoadingModList().getMods().stream()
+                    .anyMatch(mod -> mod.getModId().equals(MoonwoundRaidCompatibility.MOD_ID)
+                            && MoonwoundRaidCompatibility.supportsMixin(mixinClassName, mod.getVersion().toString()));
+        }
 
         if (mixinClassName.equals("com.jayemceekay.shadowedhearts.mixin.MixinCancelThrownPokeballInBattleHelper") ||
                 mixinClassName.equals("com.jayemceekay.shadowedhearts.mixin.MixinPokeballHitReserved")) {
@@ -22,57 +57,18 @@ public class ShadowedHeartsMixinConfigPlugin implements IMixinConfigPlugin {
         }
 
         return switch (mixinClassName) {
-            case "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtras_1_7_24_MoveTileTooltipMixin" -> {
-                var mod = FMLLoader.getLoadingModList().getModFileById("cobblemon_battle_extras");
-                if (mod == null) yield false;
-                try {
-                    yield VersionRange.createFromVersionSpec("(,1.7.24]")
-                            .containsVersion(new DefaultArtifactVersion(mod.versionString()));
-                } catch (Exception e) {
-                    yield false;
-                }
-            }
-            case "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtras_1_7_25to40_NewMoveTileTooltipMixin" -> {
-                var mod = FMLLoader.getLoadingModList().getModFileById("cobblemon_battle_extras");
-                if (mod == null) yield false;
-                try {
-                    yield VersionRange.createFromVersionSpec("[1.7.25,1.7.40]")
-                            .containsVersion(new DefaultArtifactVersion(mod.versionString()));
-                } catch (Exception e) {
-                    yield false;
-                }
-            }
-            case "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtras_1_7_41_NewMoveTileTooltipMixin",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasBattleInfoPanelRendererMixin",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasCustomBattleControllerMixin",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasCustomTooltipRendererMixin",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasMoveDisplayInfoAccessor",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasMoveTileVisualDataAccessor",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasPartySideRendererMixin",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonbattleextras.CobblemonBattleExtrasTypeChartMixin" -> {
-                var mod = FMLLoader.getLoadingModList().getModFileById("cobblemon_battle_extras");
-                if (mod == null) yield false;
-                try {
-                    yield VersionRange.createFromVersionSpec("[1.7.41,)")
-                            .containsVersion(new DefaultArtifactVersion(mod.versionString()));
-                } catch (Exception e) {
-                    yield false;
-                }
-            }
-            case "com.jayemceekay.shadowedhearts.mixin.cobblemonpartyextras.MixinCobblemonPartyExtrasCustomTooltipRenderer",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonpartyextras.MixinCobblemonPartyExtrasNatureTooltipBuilder",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonpartyextras.MixinCobblemonPartyExtrasMoveTooltipBuilder",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonpartyextras.MixinCobblemonPartyExtrasMoveTooltipHelper",
-                 "com.jayemceekay.shadowedhearts.mixin.cobblemonpartyextras.MixinCobblemonPartyExtrasSummaryUIMixin" ->
-                    FMLLoader.getLoadingModList().getModFileById("cobblemon_party_extras") != null;
-            case "com.jayemceekay.shadowedhearts.mixin.simpletms.MixinPokemonSelectingItemNonBattle" ->
+            case "com.jayemceekay.shadowedhearts.mixin.simpletms.MixinPokemonSelectingItemNonBattle",
+                 "com.jayemceekay.shadowedhearts.mixin.simpletms.MixinMoveLearnItem" ->
                     FMLLoader.getLoadingModList().getModFileById("simpletms") != null;
-            case "com.jayemceekay.shadowedhearts.mixin.rctmod.MixinRCTModMakeBattle" ->
-                    FMLLoader.getLoadingModList().getModFileById("rctmod") != null;
             case "com.jayemceekay.shadowedhearts.mixin.MixinIrisRenderingPipeline",
                  "com.jayemceekay.shadowedhearts.mixin.IrisRenderingPipelineAccessor" ->
                     FMLLoader.getLoadingModList().getModFileById("iris") != null;
-            case "com.jayemceekay.shadowedhearts.mixin.MixinShowdownMoveset" ->
+            case "com.jayemceekay.shadowedhearts.mixin.MixinShowdownMoveset",
+                 "com.jayemceekay.shadowedhearts.mixin.MixinAspectUtils",
+                 "com.jayemceekay.shadowedhearts.mixin.megashowdown.MixinMegaEvoHandler",
+                 "com.jayemceekay.shadowedhearts.mixin.megashowdown.MixinMegaGimmick",
+                 "com.jayemceekay.shadowedhearts.mixin.megashowdown.MixinUltraBurstHandler",
+                 "com.jayemceekay.shadowedhearts.mixin.megashowdown.MixinUltraGimmick" ->
                     FMLLoader.getLoadingModList().getModFileById("mega_showdown") != null;
             default -> true;
         };

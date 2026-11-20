@@ -1,8 +1,10 @@
 package com.jayemceekay.shadowedhearts.mixin;
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
-import com.jayemceekay.shadowedhearts.ShadowFlag;
-import com.jayemceekay.shadowedhearts.ShadowPokemonData;
+import com.jayemceekay.shadowedhearts.common.craterrescue.CraterRescueService;
+import com.jayemceekay.shadowedhearts.common.shadow.SyncedEntityAspects;
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowFlag;
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowPokemonData;
 import net.minecraft.network.syncher.SynchedEntityData;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,11 +16,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Also treats shadow-aspected Pokemon as wild for capture checks, allowing Pokéballs to be thrown at
  * NPC trainer Pokémon if they are shadow (Colosseum/XD mechanic).
  */
-@Mixin(PokemonEntity.class)
+@Mixin(value = PokemonEntity.class)
 public abstract class MixinPokemonEntity implements ShadowFlag {
 
-    @Inject(method = "<clinit>", at = @At("TAIL"))
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void shadowedhearts$tickCraterActor(CallbackInfo ci) {
+        CraterRescueService.tickActor((PokemonEntity) (Object) this);
+    }
+
+    @Inject(method = "<clinit>", at = @At("TAIL"), remap = false)
     private static void shadowedhearts$clinit(CallbackInfo ci) {
+        SyncedEntityAspects.register();
         ShadowPokemonData.register();
     }
 

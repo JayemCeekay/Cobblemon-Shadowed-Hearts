@@ -1,7 +1,8 @@
 package com.jayemceekay.shadowedhearts.client.sound;
 
-import com.jayemceekay.shadowedhearts.core.ModBlocks;
-import com.jayemceekay.shadowedhearts.core.ModSounds;
+import com.jayemceekay.shadowedhearts.config.ShadowedHeartsConfigs;
+import com.jayemceekay.shadowedhearts.registry.ModBlocks;
+import com.jayemceekay.shadowedhearts.registry.ModSounds;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.AbstractTickableSoundInstance;
 import net.minecraft.core.BlockPos;
@@ -30,6 +31,11 @@ public class RelicStoneSoundInstance extends AbstractTickableSoundInstance {
     @Override
     public void tick() {
         tickCount++;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (player == null || minecraft.level == null || minecraft.player != player || player.level() != minecraft.level) {
+            this.stop();
+            return;
+        }
         if (this.player != null && this.player.isAlive()) {
             if (Minecraft.getInstance().level != null && !Minecraft.getInstance().level.getBlockState(pos).is(ModBlocks.RELIC_STONE.get())) {
                 this.stop();
@@ -46,7 +52,7 @@ public class RelicStoneSoundInstance extends AbstractTickableSoundInstance {
                     this.stop();
                 }
             } else {
-                float targetVolume = 1.0F - (float)(Math.sqrt(distSq) / (double)maxDist);
+                float targetVolume = (1.0F - (float)(Math.sqrt(distSq) / (double)maxDist)) * ShadowedHeartsConfigs.getInstance().getClientConfig().soundConfig().relicShrineLoopVolume();
                 this.volume = Mth.lerp(0.1F, this.volume, targetVolume);
             }
         } else {

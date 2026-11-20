@@ -6,25 +6,30 @@ import com.cobblemon.mod.common.api.types.ElementalTypes;
 import com.cobblemon.mod.common.client.gui.summary.Summary;
 import com.cobblemon.mod.common.client.gui.summary.widgets.screens.moves.MoveSwapScreen;
 import com.cobblemon.mod.common.client.gui.summary.widgets.screens.moves.MovesWidget;
-import com.jayemceekay.shadowedhearts.ShadowGate;
+import com.jayemceekay.shadowedhearts.common.shadow.restrictions.ShadowRestrictionPolicy;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Masks non-shadow moves in the Summary.MOVE_SWAP side screen entries
  * when the selected Pokemon is Shadow-locked. Hides move name and stats,
  * neutralizes the colored bar, and swaps the type icon to a shadow-locked glyph.
  */
-@Mixin(value = MoveSwapScreen.MoveSlot.class)
+@Mixin(value = MoveSwapScreen.MoveSlot.class, remap = false)
 public abstract class MixinMoveSwapScreenMoveSlot {
 
     @Shadow public abstract MoveSwapScreen getPane();
@@ -40,7 +45,31 @@ public abstract class MixinMoveSwapScreenMoveSlot {
         Summary summary = mw.getSummary();
         var pokemon = summary.getSelectedPokemon$common();
         if (pokemon == null) return false;
-        return ShadowGate.isShadowLockedClient(pokemon);
+        return shadowedhearts$blocksReplacement(pane);
+    }
+
+    private static boolean shadowedhearts$shouldMaskFromScreen() {
+        Screen screen = Minecraft.getInstance().screen;
+        if (!(screen instanceof Summary summary)) return false;
+        var pokemon = summary.getSelectedPokemon$common();
+        if (pokemon == null) return false;
+        return summary.getSideScreen() instanceof MoveSwapScreen pane
+                && shadowedhearts$blocksReplacement(pane);
+    }
+
+    @Unique
+    private static boolean shadowedhearts$blocksReplacement(MoveSwapScreen pane) {
+        var pokemon = pane.getMovesWidget().getSummary().getSelectedPokemon$common();
+        var replacedMove = pane.getReplacedMove();
+        return ShadowRestrictionPolicy.blocksMoveReplacement(
+                pokemon, replacedMove == null ? null : replacedMove.getTemplate());
+    }
+
+    @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
+    private void shadowedhearts$preventLockedReplacement(CallbackInfoReturnable<Boolean> cir) {
+        if (shadowedhearts$blocksReplacement(getPane())) {
+            cir.setReturnValue(false);
+        }
     }
 
     // Mask move name (ordinal 0)
@@ -124,7 +153,7 @@ public abstract class MixinMoveSwapScreenMoveSlot {
     )
     private MutableComponent shadowedhearts$maskPP(MutableComponent original) {
         if (shadowedhearts$shouldMask()) {
-            return Component.literal("PP ??");
+            return Component.translatable("gui.shadowedhearts.masked_pp");
         }
         return original;
     }
@@ -166,6 +195,7 @@ public abstract class MixinMoveSwapScreenMoveSlot {
     }
 
     // Swap the TypeIcon type to shadow-locked when masked
+    // Handler must be static because it targets a constructor invocation (<init>)
     @ModifyArg(
             method = "render",
             at = @At(
@@ -174,7 +204,7 @@ public abstract class MixinMoveSwapScreenMoveSlot {
             ),
             index = 2
     )
-    private ElementalType shadowedhearts$swapType(ElementalType original) {
-        return shadowedhearts$shouldMask() ? ElementalTypes.INSTANCE.get("shadow-locked") : original;
+    private static ElementalType shadowedhearts$swapType(ElementalType original) {
+        return shadowedhearts$shouldMaskFromScreen() ? ElementalTypes.INSTANCE.get("shadow-locked") : original;
     }
 }

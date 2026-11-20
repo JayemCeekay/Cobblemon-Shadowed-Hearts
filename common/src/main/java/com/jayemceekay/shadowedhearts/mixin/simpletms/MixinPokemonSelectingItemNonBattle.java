@@ -1,7 +1,7 @@
 package com.jayemceekay.shadowedhearts.mixin.simpletms;
 
 import com.cobblemon.mod.common.pokemon.Pokemon;
-import com.jayemceekay.shadowedhearts.PokemonAspectUtil;
+import com.jayemceekay.shadowedhearts.common.shadow.restrictions.ShadowRestrictionPolicy;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dragomordor.simpletms.item.api.PokemonSelectingItemNonBattle;
@@ -15,22 +15,22 @@ import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
-@Mixin(value = PokemonSelectingItemNonBattle.class)
+@Mixin(value = PokemonSelectingItemNonBattle.class, remap = false)
 public interface MixinPokemonSelectingItemNonBattle {
 
-    @WrapOperation(method = "use", at = @At(value = "INVOKE", target = "Ldragomordor/simpletms/item/api/PokemonSelectingItemNonBattle;applyToPokemon(Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/world/item/ItemStack;Lcom/cobblemon/mod/common/pokemon/Pokemon;)Lnet/minecraft/world/InteractionResultHolder;"))
+    @WrapOperation(method = "use", at = @At(value = "INVOKE", target = "Ldragomordor/simpletms/item/api/PokemonSelectingItemNonBattle;applyToPokemon(Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/world/item/ItemStack;Lcom/cobblemon/mod/common/pokemon/Pokemon;)Lnet/minecraft/world/InteractionResultHolder;"), remap = true)
     private @Nullable InteractionResultHolder<@NotNull ItemStack> shadowedhearts$preventShadowPokemonUse(PokemonSelectingItemNonBattle instance, @NotNull ServerPlayer serverPlayer, @NotNull ItemStack itemStack, @NotNull Pokemon pokemon, Operation<InteractionResultHolder<ItemStack>> original) {
-        if(PokemonAspectUtil.hasShadowAspect(pokemon)) {
-            serverPlayer.sendSystemMessage(Component.literal("You cannot use this item on a shadow pokemon!").withStyle(ChatFormatting.RED), true);
+        if (ShadowRestrictionPolicy.blocksMoveTeaching(pokemon)) {
+            serverPlayer.sendSystemMessage(Component.translatable("message.shadowedhearts.simpletms.shadow_restricted").withStyle(ChatFormatting.RED), true);
             return InteractionResultHolder.fail(itemStack);
         }
         return original.call(instance, serverPlayer, itemStack, pokemon);
     }
 
-    @WrapOperation(method = "interactGeneral$lambda$4", at = @At(value = "INVOKE", target = "Ldragomordor/simpletms/item/api/PokemonSelectingItemNonBattle;applyToPokemon(Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/world/item/ItemStack;Lcom/cobblemon/mod/common/pokemon/Pokemon;)Lnet/minecraft/world/InteractionResultHolder;"))
+    @WrapOperation(method = "interactGeneral$lambda$4", at = @At(value = "INVOKE", target = "Ldragomordor/simpletms/item/api/PokemonSelectingItemNonBattle;applyToPokemon(Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/world/item/ItemStack;Lcom/cobblemon/mod/common/pokemon/Pokemon;)Lnet/minecraft/world/InteractionResultHolder;"), remap = true)
     private static InteractionResultHolder<ItemStack> shadowedhearts$preventShadowPokemonInteract(PokemonSelectingItemNonBattle instance, ServerPlayer serverPlayer, ItemStack itemStack, Pokemon pokemon, Operation<InteractionResultHolder<ItemStack>> original) {
-        if(PokemonAspectUtil.hasShadowAspect(pokemon)) {
-            serverPlayer.sendSystemMessage(Component.literal("You cannot use this item on a shadow pokemon!").withStyle(ChatFormatting.RED), true);
+        if (ShadowRestrictionPolicy.blocksMoveTeaching(pokemon)) {
+            serverPlayer.sendSystemMessage(Component.translatable("message.shadowedhearts.simpletms.shadow_restricted").withStyle(ChatFormatting.RED), true);
             return InteractionResultHolder.fail(itemStack);
         }
         return original.call(instance, serverPlayer, itemStack, pokemon);

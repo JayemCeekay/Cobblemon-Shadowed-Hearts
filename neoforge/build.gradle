@@ -1,12 +1,65 @@
 plugins {
-    id 'com.github.johnrengelman.shadow'
-    id 'org.jetbrains.kotlin.jvm' version '2.2.0'
+    id 'com.gradleup.shadow'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.21'
 }
 
 architectury {
     platformSetupLoomIde()
     neoForge()
 }
+
+loom {
+    // Loom 1.17 processes owo's dependency interfaces before its NeoForge
+    // Mojang mapping provider exists. These are dev-only interface hints;
+    // dependency mixins still supply the interfaces at runtime.
+    interfaceInjection {
+        enableDependencyInterfaceInjection.set(false)
+    }
+    silentMojangMappingsLicense()
+
+    runs {
+        client {
+            client()
+            runDir "run"
+            // Keep Loom's default Dev identity so existing single-player data is retained.
+            // IDE launches must also execute Gradle's preparation tasks.
+            preferGradleTask = true
+        }
+
+        client2 {
+            inherit client
+            name = "Minecraft Client 2"
+            programArgs "--username", "Dev2"
+            runDir "run/client2"
+        }
+    }
+}
+
+// Both clients already share developmentNeoForge/runtimeClasspath. Mirror the
+// extra mods too: add/remove local jars in run/mods, never run/client2/mods.
+// Sync only this directory; saves, options and each client's config stay separate.
+def syncClient2Mods = tasks.register('syncClient2Mods') {
+    group = 'loom'
+    description = 'Mirrors the host client mods into client 2 for LAN testing.'
+    // Always execute, including when the host mods directory is empty, so removing
+    // the final host mod also removes its stale copy from client 2.
+    doLast {
+        project.sync {
+            from layout.projectDirectory.dir('run/mods')
+            into layout.projectDirectory.dir('run/client2/mods')
+        }
+    }
+}
+
+tasks.named('runClient') {
+    description = 'Starts the LAN host as Dev; open a world to LAN after loading it.'
+}
+
+tasks.named('runClient2') {
+    dependsOn syncClient2Mods
+    description = 'Starts Dev2 with matching mods; join localhost:<LAN port> using Direct Connection.'
+}
+
 
 configurations {
     common {
@@ -55,12 +108,42 @@ repositories {
         name = "AzureDoom Mods"
         url = "https://maven.azuredoom.com/mods"
     }
+    mavenLocal()
 }
 
 dependencies {
+    // Both LAN test clients exercise the optional raid adapter and its native battle engine.
+    [
+            "curse.maven:cobblemonraiddens-1349231:${rootProject.raid_dens_neoforge_file}",
+            "curse.maven:asymmetric-battles-api-1717490:${rootProject.asymmetric_battles_neoforge_file}"
+    ].each { dependency ->
+        modCompileOnly(dependency) { transitive = false }
+        modLocalRuntime(dependency) { transitive = false }
+    }
+    modLocalRuntime("software.bernie.geckolib:geckolib-neoforge-1.21.1:4.7.7")
+    if (rootProject.devYaclEnabled) {
+        modLocalRuntime("dev.isxander:yet-another-config-lib:${rootProject.yacl_version}+${rootProject.minecraft_version}-neoforge") { transitive = false }
+        // Loom strips YACL's nested jars. Supply them on the NeoForge dev module path.
+        forgeRuntimeLibrary('org.quiltmc.parsers:gson:0.2.1') { exclude group: 'com.google.code.gson' }
+        forgeRuntimeLibrary 'com.twelvemonkeys.imageio:imageio-webp:3.12.0'
+    }
+    minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
+    mappings loom.officialMojangMappings()
     neoForge "net.neoforged:neoforge:$rootProject.neoforge_version"
 
     modImplementation "dev.architectury:architectury-neoforge:$rootProject.architectury_api_version"
+
+    // Both LAN clients inherit these dev-only mods; the absent-mod suite omits them.
+    [
+            "dev.ftb.mods:ftb-chunks-neoforge:${rootProject.ftb_chunks_version}",
+            "dev.ftb.mods:ftb-library-neoforge:${rootProject.ftb_library_version}",
+            "dev.ftb.mods:ftb-teams-neoforge:${rootProject.ftb_teams_version}"
+    ].each { dependency ->
+        if (rootProject.ftbGameTestsEnabled) modCompileOnly(dependency) { transitive = false }
+        if (!rootProject.ftbGameTestsEnabled || rootProject.ftbGameTestsWithFtb) {
+            modLocalRuntime(dependency) { transitive = false }
+        }
+    }
 
     compileOnly(project(path: ':common', configuration: 'namedElements')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionNeoForge')
@@ -69,58 +152,75 @@ dependencies {
     modImplementation("com.cobblemon:neoforge:${cobblemon_version}")
 
     //kotlin for forge
-    modCompileOnly("maven.modrinth:ordsPcFz:4qCjWixP")
-    runtimeOnly("maven.modrinth:ordsPcFz:4qCjWixP")
+    modCompileOnly("maven.modrinth:ordsPcFz:${rootProject.kotlin_for_forge_version}")
+    runtimeOnly("maven.modrinth:ordsPcFz:${rootProject.kotlin_for_forge_version}")
 
     //iris shaders
     modCompileOnly("maven.modrinth:YL57xq9U:t3ruzodq")
 
     //rctapi
-    modCompileOnlyApi("curse.maven:radical-cobblemon-trainers-api-1152792:7319959")
+    modImplementation("curse.maven:radical-cobblemon-trainers-api-1152792:${rootProject.rct_api_neoforge_file}")
 
-    //owo lib?
-    modCompileOnly("maven.modrinth:ccKDOlHs:NMCHU6DZ")
+    //rctmod
+    modImplementation("curse.maven:rctmod-1009534:${rootProject.rct_mod_neoforge_file}")
+
+    //owo lib
+    // The current NeoForge release is published on Modrinth, not Wispforest Maven.
+    modImplementation("maven.modrinth:ccKDOlHs:${project.owo_version}")
 
     //accessories
-    modImplementation("io.wispforest:accessories-neoforge:${project.accessories_version}")
-
-    implementation ("org.xerial:sqlite-jdbc:3.46.0.0") {
-        exclude group: 'org.slf4j'
+    modImplementation("io.wispforest:accessories-neoforge:${project.accessories_version}") {
+        // Owo is supplied above; its libraries use forgeRuntimeLibrary below.
+        // Avoid separate remapped copies of Accessories' older library versions.
+        exclude group: 'io.wispforest', module: 'owo-lib-neoforge'
+        exclude group: 'io.wispforest', module: 'endec'
+        exclude group: 'io.wispforest.endec', module: 'gson'
+        exclude group: 'io.wispforest.endec', module: 'jankson'
+        exclude group: 'io.wispforest.endec', module: 'netty'
+        exclude group: 'blue.endless', module: 'jankson'
     }
-    include("org.xerial:sqlite-jdbc:3.46.0.0")
 
-    // Remove from shadowBundle if using forgeRuntimeLibrary to avoid duplication
-    //forgeRuntimeLibrary "org.xerial:sqlite-jdbc:3.46.0.0"
-
-    forgeRuntimeLibrary("io.wispforest:endec:0.1.5.1")
-    forgeRuntimeLibrary("io.wispforest.endec:gson:0.1.3.1")
-    forgeRuntimeLibrary("io.wispforest.endec:jankson:0.1.3.1")
-    forgeRuntimeLibrary("io.wispforest.endec:netty:0.1.2")
-    forgeRuntimeLibrary("blue.endless:jankson:1.2.2")
-
-    //modernFix
-    //modRuntimeOnly("maven.modrinth:nmDcB62a:8Be8uJW6")
-
-    //embeddium
-    //modRuntimeOnly("maven.modrinth:sk9rgfiA:J7b96IEd")
+    // Loom's dependency source remapper reads modCompileOnly, not plain compileOnly.
+    // Keep remapped copies compile-only and provide the original libraries at runtime.
+    [
+        "io.wispforest:endec:0.1.8.1",
+        "io.wispforest.endec:gson:0.1.5.1",
+        "io.wispforest.endec:jankson:0.1.5.1",
+        "io.wispforest.endec:netty:0.1.4.1",
+        "blue.endless:jankson:1.2.2"
+    ].each { library ->
+        modCompileOnly(library) { transitive = false }
+        forgeRuntimeLibrary(library)
+    }
 
     //modRuntimeOnly("maven.modrinth:AANobbMI:Pb3OXVqC")
 
-    //concentration
-    //modRuntimeOnly("maven.modrinth:QyvWSZ5S:E7K9ZMD2")
-
-    //cobblemon battle extras
-    modImplementation("maven.modrinth:2iY8VFqL:BBOCqBbU")
-
-    //cobblemon party extras
-    modImplementation("maven.modrinth:x2wZP9kQ:wxVvkEmX")
-
-    //cobblemon tim core
-    modRuntimeOnly("maven.modrinth:lVP9aUaY:YhsWrN4q")
+    //cobblemon mega showdown
+    modImplementation("maven.modrinth:SszvX85I:${rootProject.mega_showdown_neoforge_version}")
 
     //simpleTMs
     modCompileOnly("maven.modrinth:yFqR0DNc:uaKfPMYS")
 
+    //lost lore
+    //modImplementation("maven.modrinth:49cNEVjn:vFf95Mjx")
+
+    //wild battle api
+    modCompileOnly("curse.maven:wild-battle-api-1478863:7765020")
+
+    //cobblemon battle tower
+    modCompileOnly("curse.maven:cobblemon-battle-tower-1441260:8912881")
+
+    // Cloth Config 15.0.140 for NeoForge; the Fabric artifact also exposes an
+    // intermediary access widener that breaks Loom's NeoForge cache setup.
+    modImplementation("maven.modrinth:9s6osm5g:izKINKFg")
+
+    //roughly enough items
+    modCompileOnly("me.shedaniel:RoughlyEnoughItems-neoforge:${rootProject.rei_version}") { transitive = false }
+    // Include JEI alongside the existing REI dev setup; override with -PrecipeViewers=none, jei, rei or emi.
+    def recipeViewers = providers.gradleProperty('recipeViewers').getOrElse('rei,jei').split(',') as List
+    if (recipeViewers.contains('rei')) modLocalRuntime("maven.modrinth:nfn13YXA:b8gfS9Je")
+    if (recipeViewers.contains('jei')) modLocalRuntime("mezz.jei:jei-${rootProject.minecraft_version}-neoforge:${rootProject.jei_version}")
+    if (recipeViewers.contains('emi')) modLocalRuntime("dev.emi:emi-neoforge:${rootProject.emi_version}")
 }
 
 processResources {
@@ -138,5 +238,67 @@ shadowJar {
 
 remapJar {
     input.set shadowJar.archiveFile
+}
+
+if (rootProject.ftbGameTestsEnabled) {
+    def suiteName = rootProject.ftbGameTestsWithFtb ? 'ftb-gametest' : 'ftb-gametest-without-ftb'
+    def reportFile = layout.buildDirectory.file("test-results/${suiteName}.xml")
+    def ftbGametest = sourceSets.create('ftbGametest') {
+        java.setSrcDirs([rootProject.file('common/src/ftbGametest/java'), file('src/ftbGametest/java')])
+        resources.setSrcDirs([rootProject.file('common/src/ftbGametest/resources'), file('src/ftbGametest/resources')])
+        compileClasspath += sourceSets.main.output + sourceSets.main.compileClasspath + project(':common').sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.main.runtimeClasspath + project(':common').sourceSets.main.output
+    }
+    loom.createRemapConfigurations(ftbGametest)
+    loom.mods {
+        shadowedhearts_ftb_gametest {
+            sourceSet ftbGametest
+        }
+    }
+    loom.runs.create('ftbGameTest') {
+        server()
+        forgeTemplate 'gameTestServer'
+        source ftbGametest
+        name 'FTB Integration GameTests'
+        runDir "build/${suiteName}"
+        ideConfigGenerated false
+        property 'neoforge.enableGameTest', 'true'
+        property 'neoforge.gameTestServer', 'true'
+        property 'neoforge.enabledGameTestNamespaces', 'shadowedhearts_ftb_gametest'
+        property 'shadowedhearts.ftbGametest.expectFtb', rootProject.ftbGameTestsWithFtb.toString()
+        property 'shadowedhearts.ftbGametest.reportFile', reportFile.get().asFile.absolutePath
+    }
+    tasks.named('runFtbGameTest') {
+        group = 'verification'
+        description = 'Runs real FTB claim and infuser integration GameTests in build/ftb-gametest.'
+        // Both launchers compile shared sources and should not write caches simultaneously.
+        mustRunAfter ':fabric:runFtbGameTest'
+        doFirst {
+            def report = reportFile.get().asFile
+            if (report.exists() && !report.delete()) throw new GradleException("Cannot remove stale FTB test report: ${report}")
+            // GameTest servers bypass EULA enforcement. Avoid owo's interactive missing-file prompt.
+            def eulaFile = layout.buildDirectory.file("${suiteName}/eula.txt").get().asFile
+            if (!eulaFile.exists()) {
+                eulaFile.parentFile.mkdirs()
+                eulaFile.setText('eula=false\n', 'UTF-8')
+            }
+        }
+        doLast {
+            def report = reportFile.get().asFile
+            if (!report.isFile()) throw new GradleException("FTB GameTests did not produce an XML report: ${report}")
+            def xml = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(report)
+            def cases = xml.getElementsByTagName('testcase')
+            def names = (0..<cases.length).collect { cases.item(it).getAttribute('name') }
+            // Keep these counts aligned with both FTB GameTest generators.
+            def expectedCount = rootProject.ftbGameTestsWithFtb ? 54 : 7
+            if (names.size() != expectedCount || names.toSet().size() != expectedCount
+                    || names.any { !it.startsWith('shadowedhearts_ftb_gametest.') }
+                    || xml.getElementsByTagName('failure').length > 0
+                    || xml.getElementsByTagName('error').length > 0
+                    || xml.getElementsByTagName('skipped').length > 0) {
+                throw new GradleException("FTB GameTests did not complete all ${expectedCount} required cases successfully: ${report}")
+            }
+        }
+    }
 }
 

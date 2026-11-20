@@ -1,7 +1,7 @@
 package com.jayemceekay.shadowedhearts.integration.accessories;
 
-import com.jayemceekay.shadowedhearts.core.ModItems;
-import com.jayemceekay.shadowedhearts.items.SnagMachineItem;
+import com.jayemceekay.shadowedhearts.content.items.SnagMachineItem;
+import com.jayemceekay.shadowedhearts.registry.ModItems;
 import io.wispforest.accessories.api.AccessoriesAPI;
 import io.wispforest.accessories.api.AccessoriesCapability;
 import io.wispforest.accessories.api.slot.SlotReference;
@@ -43,6 +43,14 @@ public final class AccessoriesSnagAccessoryBridge implements SnagAccessoryBridge
                     @Override
                     public boolean canEquip(ItemStack stack, SlotReference reference) {
                         if (!(reference.entity() instanceof Player player)) return true;
+                        // Require SHIFT when equipping via right‑click from main hand so normal right‑click opens GUI.
+                        // Still allow inventory-based equipping (drag/drop) regardless of Shift state.
+                        try {
+                            ItemStack main = player.getMainHandItem();
+                            if (!player.isShiftKeyDown() && main == stack) {
+                                return false;
+                            }
+                        } catch (Throwable ignored) {}
                         // Prevent equipping as accessory if already in vanilla head slot
                         if (player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).is(ModItems.AURA_READER.get())) {
                             return false;
@@ -107,13 +115,14 @@ public final class AccessoriesSnagAccessoryBridge implements SnagAccessoryBridge
                     }
                 }
             }
+
+            if (player.getInventory().armor.get(3).is(ModItems.AURA_READER.get())) {
+                return player.getInventory().armor.get(3);
+            }
+
         } catch (Throwable ignored) {
         }
-
-        if (player.getInventory().armor.get(3).is(ModItems.AURA_READER.get())) {
-            return player.getInventory().armor.get(3);
-        }
-
+        
         return ItemStack.EMPTY;
     }
 

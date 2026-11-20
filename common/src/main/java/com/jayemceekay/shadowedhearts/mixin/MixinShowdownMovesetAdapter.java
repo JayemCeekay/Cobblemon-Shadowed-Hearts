@@ -1,9 +1,10 @@
 package com.jayemceekay.shadowedhearts.mixin;
 
+import com.cobblemon.mod.common.api.moves.Moves;
 import com.cobblemon.mod.common.battles.InBattleMove;
 import com.cobblemon.mod.common.battles.ShowdownMoveset;
 import com.cobblemon.mod.common.battles.ShowdownMovesetAdapter;
-import com.jayemceekay.shadowedhearts.ShadowGate;
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowMoveUtil;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import kotlin.Unit;
@@ -23,7 +24,7 @@ public abstract class MixinShowdownMovesetAdapter {
     private Unit shadowedhearts$wrapSetGimmickMapping(ShowdownMoveset instance, Operation<Unit> original) {
         List<InBattleMove> originalMoves = instance.getMoves();
         if (originalMoves != null) {
-            instance.setMoves(shadowedhearts$getFilteredMoves(originalMoves));
+            ///instance.setMoves(shadowedhearts$getFilteredMoves(originalMoves));
             Unit result = original.call(instance);
             instance.setMoves(originalMoves);
             return result;
@@ -38,7 +39,7 @@ public abstract class MixinShowdownMovesetAdapter {
     private void shadowedhearts$wrapSetMaxMoves(ShowdownMoveset instance, List<?> maxMoves, Operation<Void> original) {
         List<InBattleMove> originalMoves = instance.getMoves();
         if (originalMoves != null) {
-            instance.setMoves(shadowedhearts$getFilteredMoves(originalMoves));
+            //instance.setMoves(shadowedhearts$getFilteredMoves(originalMoves));
             original.call(instance, maxMoves);
             instance.setMoves(originalMoves);
         } else {
@@ -49,7 +50,7 @@ public abstract class MixinShowdownMovesetAdapter {
     private List<InBattleMove> shadowedhearts$getFilteredMoves(List<InBattleMove> moves) {
         List<InBattleMove> filteredMoves = new ArrayList<>();
         for (InBattleMove move : moves) {
-            if (!ShadowGate.isShadowMoveId(move.getId())) {
+            if (!ShadowMoveUtil.isShadowMove(Moves.getByName(move.getMove()))) {
                 filteredMoves.add(move);
             }
         }

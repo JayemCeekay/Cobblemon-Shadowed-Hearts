@@ -1,9 +1,9 @@
 plugins {
-    id 'dev.architectury.loom' version '1.11.445' apply false
+    id 'dev.architectury.loom' version '1.17.491' apply false
     id 'architectury-plugin' version '3.4-SNAPSHOT'
-    id 'com.github.johnrengelman.shadow' version '8.1.1' apply false
-    id 'org.jetbrains.kotlin.jvm' version '2.2.0'
-
+    id 'com.gradleup.shadow' version '9.3.1' apply false
+    id 'org.jetbrains.kotlin.jvm' version '2.4.21'
+    id 'me.modmuss50.mod-publish-plugin' version '2.2.1'
 }
 
 
@@ -13,9 +13,69 @@ architectury {
     minecraft = project.minecraft_version
 }
 
+// Use -PdevYacl=false to open the native topic browser in development.
+ext.devYaclEnabled = providers.gradleProperty('devYacl').map { it.toBoolean() }.getOrElse(true)
+
+// Real, loader-specific FTB integration fixtures are deliberately opt-in.
+ext.ftbGameTestsEnabled = providers.gradleProperty('ftbGameTests')
+        .map { it.toBoolean() }.getOrElse(false)
+ext.ftbGameTestsWithFtb = providers.gradleProperty('ftbGameTestsWithFtb')
+        .map { it.toBoolean() }.getOrElse(true)
+
+if (ftbGameTestsEnabled) {
+    tasks.register('ftbGameTest') {
+        group = 'verification'
+        description = 'Runs the isolated native FTB integration suite on Fabric and NeoForge.'
+        dependsOn ':fabric:runFtbGameTest', ':neoforge:runFtbGameTest'
+    }
+}
+
+// Opt-in manual test content. This pack is not a mod resource or a runClient dependency.
+tasks.register('testDatapack', Zip) {
+    group = 'distribution'
+    description = 'Package the optional NPC testing datapack for manual installation.'
+    from layout.projectDirectory.dir('datapacks/shadowedhearts-testing')
+    archiveFileName = "ShadowedHearts-testing-${project.minecraft_version}.zip"
+    destinationDirectory = layout.buildDirectory.dir('datapacks')
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.register('shadowLearnsetExample', Zip) {
+    group = 'distribution'
+    description = 'Package the optional Houndour Shadow learnset and its authoring guide.'
+    from layout.projectDirectory.dir('datapacks/shadowedhearts-shadow-learnsets')
+    archiveFileName = "ShadowedHearts-shadow-learnsets-${project.minecraft_version}.zip"
+    destinationDirectory = layout.buildDirectory.dir('datapacks')
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+// Client-side translations for the manually installed testing datapack.
+// This is deliberately independent of normal mod builds and client runs.
+tasks.register('testResourcePack', Zip) {
+    group = 'distribution'
+    description = 'Package the optional testing NPC names and dialogue resource pack for manual installation.'
+    from layout.projectDirectory.dir('resourcepacks/shadowedhearts-testing')
+    archiveFileName = "ShadowedHearts-testing-resources-${project.minecraft_version}.zip"
+    destinationDirectory = layout.buildDirectory.dir('resourcepacks')
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
 allprojects {
     group = rootProject.maven_group
     version = rootProject.mod_version
+
+    plugins.withId('java') {
+        tasks.named('check') {
+            // Gradle attaches the default JVM test suite by provider. Run it explicitly with :common:test.
+            setDependsOn(dependsOn.findAll { dependency ->
+                !(dependency instanceof NamedDomainObjectProvider && dependency.name == 'test')
+            })
+        }
+    }
+
     java {
         toolchain {
             languageVersion = JavaLanguageVersion.of(21)
@@ -62,17 +122,26 @@ subprojects {
 
     repositories {
         mavenCentral()
+        maven { url 'https://maven.quiltmc.org/repository/release/'; content { includeGroup 'org.quiltmc.parsers' } }
+        maven { url 'https://maven.blamejared.com'; content { includeGroup 'mezz.jei' } }
+        maven { url 'https://maven.shedaniel.me/'; content { includeGroupByRegex 'me\\.shedaniel.*' } }
+        maven { url 'https://repo.sleeping.town/'; content { includeGroup 'dev.emi' } }
         maven { url 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/' }
         maven { url 'https://maven.impactdev.net/repository/development/' }
         maven { url 'https://maven.neoforged.net/releases' }
+        maven {
+            name = "FTB Maven"
+            url = "https://maven.ftb.dev/releases"
+            content {
+                includeGroup "dev.ftb.mods"
+            }
+        }
         maven { url 'https://thedarkcolour.github.io/KotlinForForge/' }
         // For GitHub-hosted dependencies via JitPack
         maven { url 'https://jitpack.io' }
     }
 
     dependencies {
-        minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
-        mappings loom.officialMojangMappings()
         implementation("org.jetbrains.kotlin:kotlin-reflect")
     }
 
@@ -84,6 +153,14 @@ subprojects {
                     sourceSet project(':common').sourceSets.main
                 }
             }
+        }
+    }
+
+    processResources {
+        from project(":common").sourceSets.main.resources
+
+        filesMatching(['**/*.mods.toml', '**/pack.mcmeta', 'fabric.mod.json', '*.mixins.json']) {
+            expand project.properties
         }
     }
 
@@ -119,3 +196,5 @@ subprojects {
         }
     }
 }
+
+apply from: 'gradle/publishing.gradle'

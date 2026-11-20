@@ -1,7 +1,7 @@
 package com.jayemceekay.shadowedhearts.client.render.armor;
 
 import com.jayemceekay.shadowedhearts.config.ShadowedHeartsConfigs;
-import com.jayemceekay.shadowedhearts.items.AuraReaderItem;
+import com.jayemceekay.shadowedhearts.content.items.AuraReaderItem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.model.PlayerModel;
@@ -51,8 +51,8 @@ public class AuraReaderArmorLayer extends RenderLayer<AbstractClientPlayer, Play
         getParentModel().copyPropertiesTo(model);
         model.prepareMobModel(player, limbSwing, limbSwingAmount, partialTicks);
         model.setupAnim(player, limbSwing, limbSwingAmount, ageInTicks, netHeadYaw, headPitch);
-        getParentModel().head.translateAndRotate(poseStack);
         poseStack.pushPose();
+        getParentModel().head.translateAndRotate(poseStack);
         float scale = 0.675f;
         poseStack.scale(scale, scale, scale);
         poseStack.translate(-0.025F, ShadowedHeartsConfigs.getInstance().getClientConfig().auraReaderYOffset(), -0.05F);

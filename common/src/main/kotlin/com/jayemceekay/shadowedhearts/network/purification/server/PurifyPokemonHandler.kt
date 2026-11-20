@@ -1,15 +1,16 @@
 package com.jayemceekay.shadowedhearts.network.purification.server
 
-import com.cobblemon.mod.common.Cobblemon
 import com.cobblemon.mod.common.api.mark.Marks
 import com.cobblemon.mod.common.api.net.ServerNetworkPacketHandler
-import com.jayemceekay.shadowedhearts.PokemonAspectUtil
-import com.jayemceekay.shadowedhearts.ShadowService
 import com.jayemceekay.shadowedhearts.advancements.ModCriteriaTriggers
-import com.jayemceekay.shadowedhearts.network.purification.PokemonPurifiedPacket
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowHeartGauge
+import com.jayemceekay.shadowedhearts.common.shadow.ShadowService
+import com.jayemceekay.shadowedhearts.config.GameplayTuningConfig
 import com.jayemceekay.shadowedhearts.network.purification.PurifyPokemonPacket
+import com.jayemceekay.shadowedhearts.network.purification.client.PokemonPurifiedPacket
 import com.jayemceekay.shadowedhearts.storage.purification.PurificationChamberPosition
 import com.jayemceekay.shadowedhearts.storage.purification.PurificationChamberStore
+import com.jayemceekay.shadowedhearts.storage.purification.link.PurificationLinkManager
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
@@ -19,10 +20,13 @@ import net.minecraft.server.level.ServerPlayer
  */
 object PurifyPokemonHandler : ServerNetworkPacketHandler<PurifyPokemonPacket> {
     override fun handle(packet: PurifyPokemonPacket, server: MinecraftServer, player: ServerPlayer) {
-        val registryAccess = player.registryAccess()
-        val purification = Cobblemon.storage.getCustomStore(PurificationChamberStore::class.java, packet.purificationStoreID, registryAccess)
-            ?: Cobblemon.storage.getCustomStore(PurificationChamberStore::class.java, player.uuid, registryAccess)
-            ?: return
+        if (!GameplayTuningConfig.INSTANCE.chamberPurificationEnabled()) {
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable("message.shadowedhearts.chamber.disabled"), true)
+            return
+        }
+        // Chamber stores are per-player. Never resolve another player's store from a packet.
+        if (packet.purificationStoreID != player.uuid || packet.setIndex !in 0 until PurificationChamberStore.SETS) return
+        val purification = PurificationLinkManager.getStore(player) ?: return
 
         val target = PurificationChamberPosition(setIndex = packet.setIndex, index = 0, isShadow = true)
         val pokemon = purification[target]
@@ -32,11 +36,10 @@ object PurifyPokemonHandler : ServerNetworkPacketHandler<PurifyPokemonPacket> {
 
 
         // Verify it's actually ready for purification (heart gauge 0)
-        if (PokemonAspectUtil.getHeartGauge(pokemon) == 0F) {
-            ShadowService.fullyPurify(pokemon, null)
-            if (pokemon.getOwnerPlayer() is ServerPlayer) {
-                ModCriteriaTriggers.triggerShadowPurified(player)
-            }
+        if (ShadowHeartGauge.isReadyForPurification(pokemon)) {
+            ShadowService.fullyPurify(pokemon, null, player)
+            // Cobblemon's getOwnerPlayer only recognizes party/PC stores, not our custom chamber.
+            ModCriteriaTriggers.triggerShadowPurified(player)
             Marks.getByIdentifier(ResourceLocation.fromNamespaceAndPath("cobblemon", "ribbon_event_national"))
                 ?.let { pokemon.exchangeMark(it, true) };
             PokemonPurifiedPacket(

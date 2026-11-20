@@ -1,12 +1,16 @@
 package com.jayemceekay.shadowedhearts.pokemon.properties;
 
+import com.cobblemon.mod.common.api.pokemon.aspect.AspectProvider;
 import com.cobblemon.mod.common.api.properties.CustomPokemonProperty;
+import com.jayemceekay.shadowedhearts.common.aura.AuraStyleAspectProvider;
+import com.jayemceekay.shadowedhearts.common.shadow.RetainedShadowMoves;
+import com.jayemceekay.shadowedhearts.pokemon.properties.type.AuraStylePropertyType;
 import com.jayemceekay.shadowedhearts.pokemon.properties.type.ShadowChancePropertyType;
 
 import java.util.List;
 
 /**
- * Registers the ShadowChanceProperty parser with Cobblemon using the public API (no reflection).
+ * Registers Shadowed Hearts property parsers and derived aura rendering aspects with Cobblemon.
  */
 public final class PropertyRegistration {
     private PropertyRegistration() {
@@ -14,6 +18,12 @@ public final class PropertyRegistration {
 
     public static void register() {
         try {
+            CustomPokemonProperty.Companion.register("sh_move_lifecycle", true, MoveLifecycleProperty::parse,
+                    () -> List.of("go_shadow:frustration", "go_purified:return"));
+            CustomPokemonProperty.Companion.register(RetainedShadowMoves.KEY, true, RetainedShadowMoves::parse, List::of);
+            CustomPokemonProperty.Companion.register(new AuraStylePropertyType());
+            AspectProvider.Companion.register(AuraStyleAspectProvider.INSTANCE);
+
             // Directly register our type implementation
             CustomPokemonProperty.Companion.register(new ShadowChancePropertyType());
 
@@ -32,10 +42,20 @@ public final class PropertyRegistration {
                 return new HeartGaugeProperty(Integer.parseInt(val));
             }, () -> List.of("0", "50", "100"));
 
+            CustomPokemonProperty.Companion.register("sh_heartgaugemax", true, (val) -> {
+                if (val == null) return null;
+                return new HeartGaugeMaxProperty(Integer.parseInt(val));
+            }, () -> List.of("5000", "10000", "20000"));
+
             CustomPokemonProperty.Companion.register("sh_xp_buf", true, (val) -> {
                 if (val == null) return null;
                 return new XPBufferProperty(Integer.parseInt(val));
             }, () -> List.of("0", "1000", "5000"));
+
+            CustomPokemonProperty.Companion.register("sh_friendship_buf", true, (val) -> {
+                if (val == null) return null;
+                return new FriendshipBufferProperty(Integer.parseInt(val));
+            }, () -> List.of("0", "10", "70"));
 
             CustomPokemonProperty.Companion.register("sh_ev_buf", true, (val) -> {
                 if (val == null) return null;
@@ -53,6 +73,8 @@ public final class PropertyRegistration {
             }, () -> List.of("0"));
 
             CustomPokemonProperty.Companion.register("sh_shadow", true, (val) -> new ShadowProperty(), () -> List.of());
+            CustomPokemonProperty.Companion.register("sh_shadow_moves", true, ShadowEncounterMoves::parse,
+                    () -> List.of("shadowrush,bite"));
 
         } catch (Throwable ignored) {
             ignored.printStackTrace();

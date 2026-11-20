@@ -2,7 +2,7 @@ package com.jayemceekay.shadowedhearts.client.purification
 
 import com.cobblemon.mod.common.api.types.ElementalType
 import com.cobblemon.mod.common.pokemon.Pokemon
-import com.jayemceekay.shadowedhearts.storage.purification.PurificationMath
+import com.jayemceekay.shadowedhearts.common.purification.PurificationMath
 
 /**
  * Client-side helpers to compute Purification Chamber flow/tempo percentages
@@ -59,7 +59,7 @@ object PurificationClientMetrics {
             // The widget uses slot 0 if present; for ring-only list, use index 0 as facing.
             val defTypes = pokemonTypes(supports.firstOrNull())
             if (defTypes.isNotEmpty() && shadow != null) {
-                var best = 1.0
+                var best = 0.0
                 for (atk in pokemonTypes(shadow)) {
                     val m = PurificationMath.effectiveness(atk, defTypes)
                     if (m > best) best = m
@@ -136,7 +136,7 @@ object PurificationClientMetrics {
         // Center matchup influence
         val defTypes = pokemonTypes(supportsArray[PurificationMath.facingSupportIndex(supportsArray)])
         if (defTypes.isNotEmpty()) {
-            var best = 1.0
+            var best = 0.0
             for (atk in pokemonTypes(shadow)) {
                 val m = PurificationMath.effectiveness(atk, defTypes)
                 if (m > best) best = m

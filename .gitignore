@@ -15,3 +15,33 @@
 /neoforge/run/
 /common/run/
 /.architectury-transformer/
+/neoforge/runDevClient2/
+/neoforge/runDevServer/
+/RCTModJsonGenerator/
+/CobblemonNPCJsonGenerator/
+/documents/
+/.aiignore
+/docs/*
+!/docs/changelogs/
+/docs/changelogs/*
+!/docs/changelogs/*-modrinth-curseforge.md
+/Compat_Check_Mods/
+/Cobblemon Source/
+/concept art/
+/scripts/
+/output/
+/standalone/
+/blockbench/
+/color palettes/
+/.kotlin/
+/logs/
+/common/logs/
+/datapacks/*
+!/datapacks/shadowedhearts-shadow-learnsets/
+/resourcepacks/*
+
+# Local tests, test resources, and test fixtures in every module
+**/src/test/
+**/src/testFixtures/
+**/src/*[Gg]ametest/
+/AGENTS.md

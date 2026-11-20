@@ -9,8 +9,16 @@ permissions:
 
 jobs:
   publish:
+    name: Publish ${{ matrix.loader }} to ${{ matrix.site }}
     if: ${{ !github.event.deleted }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [CurseForge, Modrinth]
+        loader: [Fabric, NeoForge]
+    env:
+      LOADER: ${{ matrix.loader }}
     steps:
       - uses: actions/checkout@v7
       - name: Check the release tag
@@ -19,10 +27,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Publish Fabric and NeoForge
+      - name: Publish to CurseForge
+        if: matrix.site == 'CurseForge'
         env:
           CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: |
+          : "${CURSEFORGE_TOKEN:?Missing CurseForge token}"
+          sh gradlew "publishCurseforge${LOADER}" -PpublishLive=true
+      - name: Publish to Modrinth
+        if: matrix.site == 'Modrinth'
+        env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
         run: |
-          : "${CURSEFORGE_TOKEN:?Missing CurseForge token}" "${MODRINTH_TOKEN:?Missing Modrinth token}"
-          sh gradlew publishMods -PpublishLive=true
+          : "${MODRINTH_TOKEN:?Missing Modrinth token}"
+          sh gradlew "publishModrinth${LOADER}" -PpublishLive=true

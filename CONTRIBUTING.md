@@ -30,7 +30,9 @@ Set `mod_version` and `mod_release_type` (`ALPHA`, `BETA`, or `STABLE`) in `grad
 
 Run `.\gradlew.bat publishMods` (or `sh gradlew publishMods`) to preview the release. By default the plugin logs the four destinations and stages the production jars in `build/publishMods/`. This works without publishing tokens.
 
-To enable tag publishing, add the CurseForge author token and Modrinth version-publishing token as GitHub Actions secrets named `CURSEFORGE_TOKEN` and `MODRINTH_TOKEN`. Push a tag matching `v<mod_version>` to publish both jars to both sites. For a partial upload, check which files exist on each site, then retry just the missing destination locally with its token in the environment, for example `.\gradlew.bat publishModrinthNeoForge -PpublishLive=true`.
+To enable tag publishing, add the CurseForge author token and Modrinth version-publishing token as GitHub Actions secrets named `CURSEFORGE_TOKEN` and `MODRINTH_TOKEN`. Pushing a tag matching `v<mod_version>` starts four independent jobs, one per site and loader.
+
+If a job fails, check whether the site already has that version for that loader. If the file is missing, re-run its job in GitHub Actions (for example, **Publish NeoForge to Modrinth**). To retry locally, check out the release tag and run the matching task with the site's token in your environment, for example `.\gradlew.bat publishModrinthNeoForge -PpublishLive=true`.
 
 ## Find the right place for a change
 

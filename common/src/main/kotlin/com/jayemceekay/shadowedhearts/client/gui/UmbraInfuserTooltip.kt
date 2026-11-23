@@ -77,7 +77,7 @@ object UmbraInfuserTooltip {
             minecraft.mainRenderTarget.bindWrite(false)
             GuiPoseScissor.enable(graphics, 1, 1, width - 1, height - 1)
             try {
-                minecraft.gameRenderer.processBlurEffect(partialTick)
+                minecraft.gameRenderer.processTooltipBlur(partialTick)
             } finally {
                 graphics.disableScissor()
                 minecraft.mainRenderTarget.bindWrite(true)

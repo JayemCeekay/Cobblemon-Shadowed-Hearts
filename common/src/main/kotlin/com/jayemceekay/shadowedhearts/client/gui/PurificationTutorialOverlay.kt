@@ -216,7 +216,7 @@ class PurificationTutorialOverlay {
                     try {
                         GuiPoseScissor.enable(context, 0, 1, tooltipWidth, tooltipHeight - 1)
                         try {
-                            it.gameRenderer.processBlurEffect(partialTick)
+                            it.gameRenderer.processTooltipBlur(partialTick)
                         } finally {
                             context.disableScissor()
                         }

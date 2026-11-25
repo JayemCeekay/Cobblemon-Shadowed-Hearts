@@ -13,6 +13,7 @@ public final class ModShadersPlatformImpl {
             com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowPokemonAuraFBO.destroy();
             ModShaders.SHADOW_AURA_PIXEL_RESOLVE = null;
             ModShaders.SHADOW_AURA_PIXEL_PRESENT = null;
+            ModShaders.SHADOW_POKEMON_AURA_BLUR = null;
             com.jayemceekay.shadowedhearts.client.voidshadow.VoidShadowShaders.LIQUID = null;
             ModShaders.UMBRA_LIQUID = null;
             ModShaders.UMBRAFALL_CORE_SEEP = null;
@@ -20,6 +21,12 @@ public final class ModShadersPlatformImpl {
             com.jayemceekay.shadowedhearts.client.render.block.UmbrafallCoreSeepIrisRenderer.clear();
             ModShaders.UMBRA_INFUSER_BACKGROUND = null;
             com.jayemceekay.shadowedhearts.client.voidshadow.VoidShadowTransitions.clear();
+            try {
+                registrationContext.register(ResourceLocation.parse("shadowedhearts:aura/shadow_pokemon_aura_blur"),
+                        DefaultVertexFormat.POSITION_TEX, shader -> ModShaders.SHADOW_POKEMON_AURA_BLUR = shader);
+            } catch (java.io.IOException failure) {
+                com.jayemceekay.shadowedhearts.Shadowedhearts.LOGGER.warn("[Aura] Signature halo unavailable; using the standard blur", failure);
+            }
             try {
                 registrationContext.register(
                         ResourceLocation.parse("shadowedhearts:moonwound/portal"),

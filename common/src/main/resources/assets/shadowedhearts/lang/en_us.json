@@ -1622,6 +1622,8 @@
   "shadowedhearts.configuration.client.darkBallVfx": "Dark Ball Effects",
   "shadowedhearts.configuration.client.darkBallVfx.quality": "Dark Ball Effect Quality",
   "shadowedhearts.configuration.client.enableShadowAura": "Enable Shadow Auras",
+  "shadowedhearts.configuration.client.debugShadowAuraEmitters": "Show Aura Emitter Positions",
+  "shadowedhearts.configuration.client.debugShadowAuraEmitters.tooltip": "Mark emitter positions with small colored dots.\nSignature: lime on model edges, cyan on top, amber on the sides, magenta underneath, gray on the fallback shell.\nColosseum: violet for smoke, green for infill.\nXD: blue for cells, lavender for haze, pink for flakes.\nWhite marks luminous motes.",
   "shadowedhearts.configuration.client.moonwoundObjective": "Moonwound Objectives",
   "shadowedhearts.configuration.client.moonwoundObjective.display": "Objective Updates",
   "shadowedhearts.configuration.client.moonwoundObjective.display.tooltip": "HUD shows an Aura Reader-style infobox. CHAT sends objective updates to chat. OFF hides objective updates. This only changes your display.",

@@ -95,14 +95,26 @@ public final class ShadowPokemonAuraFBO {
     }
 
     static int blur(ShadowAuraRenderBatch batch) {
-        ShadowAuraStyle safeStyle = batch.style();
+        return blur(batch, batch.style() == ShadowAuraStyle.SIGNATURE ? worldAnimationTicks() : 0);
+    }
+
+    static int blur(ShadowAuraRenderBatch batch, double animationTicks) {
+        ShadowAuraStyle style = batch.style();
+        boolean performance = ClientEffects.auraPerformanceMode();
+        int iterations = renderSettings(style, performance).blurIterations();
+        if (style == ShadowAuraStyle.SIGNATURE && ModShaders.SHADOW_POKEMON_AURA_BLUR != null) {
+            return pipeline(batch).blur(ModShaders.SHADOW_POKEMON_AURA_BLUR, shader -> {
+                double angle = animationTicks * 0.09;
+                shader.safeGetUniform("HaloPhase").set((float) Math.sin(angle), (float) Math.cos(angle));
+                shader.safeGetUniform("HaloRadius").set(performance ? 2.6f : 2.4f);
+            }, iterations);
+        }
         // XD stores its narrow ribbon/point core in G. Keep that channel sharp
         // while filtering its aligned haze and halo; a missing dedicated shader
         // leaves XD unblurred rather than silently erasing its fine detail.
-        return pipeline(batch).blur(safeStyle == ShadowAuraStyle.XD_FAITHFUL
+        return pipeline(batch).blur(style == ShadowAuraStyle.XD_FAITHFUL
                 ? ModShaders.SHADOW_POKEMON_AURA_XD_FAITHFUL_BLUR
-                : ModShaders.PENUMBRA_BLUR, null,
-                renderSettings(safeStyle, ClientEffects.auraPerformanceMode()).blurIterations());
+                : ModShaders.PENUMBRA_BLUR, null, iterations);
     }
 
     public static boolean composite() {
@@ -396,14 +408,14 @@ public final class ShadowPokemonAuraFBO {
         }
     }
 
-    private static void setupCompositeUniforms(ShaderInstance shader, boolean modeTint) {
+    private static double worldAnimationTicks() {
         Minecraft mc = Minecraft.getInstance();
-        float gameTime = 0f;
-        if (mc.level != null) {
-            gameTime = mc.level.getGameTime() + mc.getTimer().getGameTimeDeltaPartialTick(true);
-        }
+        return mc.level == null ? 0 : mc.level.getGameTime()
+                + (double) mc.getTimer().getGameTimeDeltaPartialTick(true);
+    }
 
-        setupCompositeUniforms(shader, gameTime, modeTint);
+    private static void setupCompositeUniforms(ShaderInstance shader, boolean modeTint) {
+        setupCompositeUniforms(shader, (float) worldAnimationTicks(), modeTint);
     }
 
     private static void setupCompositeUniforms(ShaderInstance shader, float gameTime, boolean modeTint) {

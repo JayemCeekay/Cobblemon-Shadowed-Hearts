@@ -77,7 +77,7 @@ final class SettingsLayout {
     private static String clientTopic(List<String> path) {
         return switch (path.getFirst()) {
             case "accessibility" -> "accessibility";
-            case "shadowAura", "enableShadowAura" -> "auras";
+            case "shadowAura", "enableShadowAura", "debugShadowAuraEmitters" -> "auras";
             case "auraReaderYOffset" -> "reader";
             case "auraReaderHud" -> switch (path.getLast()) {
                 case "topInset", "bottomSafeMargin", "partyOverlayMargin", "rightOverlayMargin" -> "reader_layout";

@@ -1,6 +1,7 @@
 package com.jayemceekay.shadowedhearts.client.particle;
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
+import com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowPokemonAuraSystem;
 import com.jayemceekay.shadowedhearts.common.shadow.SHAspects;
 import com.jayemceekay.shadowedhearts.registry.util.ModParticleTypes;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -171,6 +172,7 @@ public class LuminousMoteParticle extends TextureSheetParticle {
 
     void setAuraSource(PokemonEntity source) {
         auraSource = source == null ? null : new WeakReference<>(source);
+        if (source != null) ShadowPokemonAuraSystem.recordMoteEmitter(source, x, y, z);
         updateAuraColor();
     }
 

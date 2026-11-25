@@ -31,6 +31,7 @@ public final class ClientConfig implements IClientConfig, ISoundConfig {
         public ModConfigSpec.EnumValue<ClientEffectPolicy.EffectOverride> auraEffects;
         public ModConfigSpec.EnumValue<ClientEffectPolicy.EffectOverride> ambientEffects;
         public ModConfigSpec.BooleanValue enableShadowAura;
+        public ModConfigSpec.BooleanValue debugShadowAuraEmitters;
         public ModConfigSpec.EnumValue<AuraRenderQuality> auraRenderQuality;
         public ModConfigSpec.EnumValue<AuraPixelationStyle> signatureAuraPixelation;
         public ModConfigSpec.EnumValue<AuraPixelationStyle> colosseumAuraPixelation;
@@ -102,6 +103,10 @@ public final class ClientConfig implements IClientConfig, ISoundConfig {
                     .comment("Master toggle for client-side Shadow aura rendering.")
                     .translation("shadowedhearts.configuration.client.enableShadowAura")
                     .define("enableShadowAura", true);
+            debugShadowAuraEmitters = builder
+                    .comment("Mark Shadow aura emitter positions with small, color-coded dots.")
+                    .translation("shadowedhearts.configuration.client.debugShadowAuraEmitters")
+                    .define("debugShadowAuraEmitters", false);
 
             builder.translation("shadowedhearts.configuration.client.shadowAura").push("shadowAura");
             auraRenderQuality = builder
@@ -328,6 +333,11 @@ public final class ClientConfig implements IClientConfig, ISoundConfig {
     public boolean enableShadowAura() {
         if (!isLoaded()) return IClientConfig.super.enableShadowAura();
         return DATA.enableShadowAura.get();
+    }
+
+    @Override
+    public boolean debugShadowAuraEmitters() {
+        return isLoaded() ? DATA.debugShadowAuraEmitters.get() : IClientConfig.super.debugShadowAuraEmitters();
     }
 
     @Override

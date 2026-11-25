@@ -542,7 +542,9 @@ final class ShadowAuraModelAnchors {
     enum AnchorSource {
         CUBE,
         CHAIN,
-        JOINT
+        JOINT,
+        SHELL,
+        EDGE
     }
 
     record AnchorKey(Object part, Object geometry, int sample) {}

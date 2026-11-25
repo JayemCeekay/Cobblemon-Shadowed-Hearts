@@ -43,6 +43,11 @@ public final class LuminousMoteEmitters {
         // Signature starts from server packets; Colosseum follows world observation.
     }
 
+    /** Stop births; already emitted motes keep their own lifetime. */
+    public static void stopEmission(int entityId) {
+        ACTIVE.remove(entityId);
+    }
+
     public static void receivePacket(LuminousMotePacket pkt) {
         var mc = Minecraft.getInstance();
         if (mc == null || mc.level == null) return;
@@ -169,7 +174,9 @@ public final class LuminousMoteEmitters {
                 }
             }
 
-            boolean active = visible && !mc.isPaused();
+            Entity source = group.entityRef.get();
+            boolean active = visible && !mc.isPaused() && source instanceof PokemonEntity pokemon
+                    && pokemon.getBeamMode() != 3 && level.getEntity(pokemon.getId()) == pokemon;
             if (group.lifecycle.style() == ShadowAuraStyle.COLOSSEUM) {
                 colosseumSources.add(new ColosseumRenderSource(en.getKey(), group, active));
                 if (active) activeColosseumGroups++;

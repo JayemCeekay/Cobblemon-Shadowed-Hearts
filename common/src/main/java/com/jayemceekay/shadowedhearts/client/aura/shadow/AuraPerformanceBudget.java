@@ -98,7 +98,7 @@ public final class AuraPerformanceBudget {
         return performance ? Math.min(fullCount, Math.max(minimum, Math.round(fullCount * .75f))) : fullCount;
     }
 
-    /** Primary body, appendage and tip emitters retain their existing budgets. */
+    /** Scale the total births per emission while retaining the full set of surface sites. */
     public int signatureFillCount(int fullCount) {
         return scaledCount(fullCount, .50f);
     }

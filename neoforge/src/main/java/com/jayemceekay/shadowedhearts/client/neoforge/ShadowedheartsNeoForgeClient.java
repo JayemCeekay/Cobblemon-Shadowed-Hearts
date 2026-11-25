@@ -151,7 +151,7 @@ public final class ShadowedheartsNeoForgeClient {
     @SubscribeEvent
     public static void onEntityLeave(EntityLeaveLevelEvent e) {
         if (e.getLevel().isClientSide()) {
-            ShadowAuraEmitters.onPokemonDespawn(e.getEntity().getId());
+            ShadowAuraEmitters.onPokemonDespawn(e.getEntity());
             if (e.getEntity() instanceof EmptyPokeBallEntity) {
                 BallEmitters.onEntityDespawn(e.getEntity().getId());
             }

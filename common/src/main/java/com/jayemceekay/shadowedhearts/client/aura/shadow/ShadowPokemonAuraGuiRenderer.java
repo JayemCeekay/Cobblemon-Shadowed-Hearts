@@ -9,6 +9,7 @@ import com.cobblemon.mod.common.pokemon.RenderablePokemon;
 import com.cobblemon.mod.common.client.render.models.blockbench.pose.Bone;
 import com.cobblemon.mod.common.client.render.models.blockbench.repository.RenderContext;
 import com.cobblemon.mod.common.client.render.models.blockbench.PosableState;
+import com.jayemceekay.shadowedhearts.client.ClientEffects;
 import com.jayemceekay.shadowedhearts.client.ModShaders;
 import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -27,6 +28,7 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
@@ -294,7 +296,8 @@ public final class ShadowPokemonAuraGuiRenderer {
             return;
         }
 
-        if (useProfileFallback || (owner.style() == ShadowAuraStyle.COLOSSEUM && !owner.hasPose())) {
+        if (useProfileFallback || owner.needsSurfaceFallback()
+                || (owner.style() == ShadowAuraStyle.COLOSSEUM && !owner.hasPose())) {
             owner.useFallbackPose(
                     fallbackCenterX,
                     fallbackCenterY,
@@ -305,8 +308,9 @@ public final class ShadowPokemonAuraGuiRenderer {
         }
         boolean persistentAura = owner.hasPose()
                 && owner.advance(System.nanoTime(), strength);
-        // Colosseum's age channel requires live puffs, including fallback poses.
-        if (!persistentAura && owner.style() == ShadowAuraStyle.COLOSSEUM) return;
+        // Even with a fallback pose, these materials follow the persistent simulation's births and age.
+        if (!persistentAura && (owner.style() == ShadowAuraStyle.COLOSSEUM
+                || owner.style() == ShadowAuraStyle.SIGNATURE)) return;
         List<GuiAnchor> anchors = List.of();
         if (!persistentAura) {
             anchors = fallbackAnchors(
@@ -392,7 +396,7 @@ public final class ShadowPokemonAuraGuiRenderer {
                 viewport[2], viewport[3]);
         Matrix4f guiProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
         try {
-            ShadowPokemonAuraFBO.blur(batch);
+            ShadowPokemonAuraFBO.blur(batch, animationTicks);
             ShadowPokemonAuraFBO.composite(
                     batch,
                     minimumU,
@@ -408,6 +412,23 @@ public final class ShadowPokemonAuraGuiRenderer {
             // run inside an orthographic GUI, so restore that sorting contract.
             RenderSystem.setProjectionMatrix(guiProjection, VertexSorting.ORTHOGRAPHIC_Z);
         }
+        }
+        if (ClientEffects.showAuraEmitters()) {
+            Matrix4f transform = AuraEmitterDebug.currentTransform();
+            List<AuraEmitterDebug.Dot> markers;
+            if (persistentAura) {
+                transform.mul(owner.simulationToGui());
+                markers = owner.emitterMarkers();
+            } else {
+                markers = new ArrayList<>(anchors.size());
+                for (GuiAnchor anchor : anchors) {
+                    markers.add(new AuraEmitterDebug.Dot(new Vec3(anchor.x, anchor.y, anchor.z),
+                            AuraEmitterDebug.Kind.FALLBACK));
+                }
+            }
+            AuraEmitterDebug.draw(markers, transform, Vec3.ZERO,
+                    2 * left / guiWidth - 1, 1 - 2 * bottom / guiHeight,
+                    2 * right / guiWidth - 1, 1 - 2 * top / guiHeight);
         }
     }
 

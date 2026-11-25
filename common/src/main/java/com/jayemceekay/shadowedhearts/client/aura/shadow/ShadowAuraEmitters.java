@@ -4,6 +4,7 @@ import com.cobblemon.mod.common.client.gui.summary.widgets.ModelWidget;
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
 import com.cobblemon.mod.common.pokemon.RenderablePokemon;
 import com.jayemceekay.shadowedhearts.client.ModShaders;
+import com.jayemceekay.shadowedhearts.client.particle.LuminousMoteEmitters;
 import com.jayemceekay.shadowedhearts.config.ShadowedHeartsConfigs;
 import com.jayemceekay.shadowedhearts.integration.accessories.SnagAccessoryBridgeHolder;
 import com.jayemceekay.shadowedhearts.network.aura.AuraLifecyclePacket;
@@ -140,14 +141,23 @@ public final class ShadowAuraEmitters {
                     for (Map.Entry<Integer, AuraInstance> e : ACTIVE.entrySet()) {
                         AuraInstance ai = e.getValue();
                         if (ai != null && newUuid.equals(ai.entityUuid) && e.getKey() != pkt.getEntityId()) {
-                            if (ACTIVE.remove(e.getKey(), ai)) ai.stopSound();
+                            if (ACTIVE.remove(e.getKey(), ai)) {
+                                ai.stopSound();
+                                ShadowPokemonAuraSystem.onPokemonDespawn(e.getKey());
+                                LuminousMoteEmitters.stopEmission(e.getKey());
+                            }
                         }
                     }
                 }
                 AuraInstance previous = ACTIVE.put(pkt.getEntityId(), new AuraInstance(pkt.getEntityId(), ent, now, FADE_IN, (pkt.getSustainOverride() > 0) ? pkt.getSustainOverride() : SUSTAIN, FADE_OUT, pkt.getX(), pkt.getY(), pkt.getZ(), pkt.getDx(), pkt.getDy(), pkt.getDz(), pkt.getBbw(), pkt.getBbh() * pkt.getHeightMultiplier(), pkt.getBbs(), pkt.getCorruption()));
-                if (previous != null) previous.stopSound();
+                if (previous != null) {
+                    previous.stopSound();
+                    ShadowPokemonAuraSystem.onPokemonDespawn(pkt.getEntityId());
+                }
             }
             case FADE_OUT -> {
+                ShadowPokemonAuraSystem.onPokemonDespawn(pkt.getEntityId());
+                LuminousMoteEmitters.stopEmission(pkt.getEntityId());
                 ACTIVE.computeIfPresent(pkt.getEntityId(), (id, inst) -> {
                     inst.beginImmediateFadeOut(now, Math.max(1, pkt.getOutTicks()));
                     return inst;
@@ -169,10 +179,21 @@ public final class ShadowAuraEmitters {
         // Server is authoritative for aura lifecycle now. Client no longer subscribes to Cobblemon send/recall events.
     }
 
+    public static void onPokemonDespawn(Entity entity) {
+        if (!(entity instanceof PokemonEntity)) return;
+        AuraInstance instance = ACTIVE.get(entity.getId());
+        if (instance != null && instance.entityUuid != null
+                && !instance.entityUuid.equals(entity.getUUID())) return;
+        Entity owner = instance == null ? null : instance.getEntity();
+        if (owner != null && owner != entity) return;
+        onPokemonDespawn(entity.getId());
+    }
+
     public static void onPokemonDespawn(int entityId) {
         // Start a quick fade-out if we still have an instance; if missing, nothing to do
         var mc = Minecraft.getInstance();
         ShadowPokemonAuraSystem.onPokemonDespawn(entityId);
+        LuminousMoteEmitters.stopEmission(entityId);
         long now = (mc != null && mc.level != null) ? mc.level.getGameTime() : 0L;
         ACTIVE.computeIfPresent(entityId, (id, inst) -> {
             inst.stopSound();
@@ -192,17 +213,8 @@ public final class ShadowAuraEmitters {
         }
 
         AuraInstance inst = ACTIVE.get(entity.getId());
-        if (inst == null) {
+        if (inst == null || !inst.canEmitFrom(entity)) {
             return 0.0f;
-        }
-
-        UUID entityUuid = entity.getUUID();
-        if (inst.entityUuid != null && !inst.entityUuid.equals(entityUuid)) {
-            return 0.0f;
-        }
-        if (inst.entityUuid == null) {
-            inst.entityUuid = entityUuid;
-            inst.entityRef = new WeakReference<>(entity);
         }
 
         long now = mc.level.getGameTime();
@@ -320,31 +332,10 @@ public final class ShadowAuraEmitters {
             }
 
 
-            // Interpolate position from client-side entity when available; fallback to last server state
-            double ix, iy, iz;
-            Entity ent = (inst.entityRef != null) ? inst.entityRef.get() : null;
-            boolean useEnt = false;
-            if (ent != null && ent.isAlive() && ent.getId() == inst.entityId) {
-                if (inst.entityUuid == null || inst.entityUuid.equals(ent.getUUID())) {
-                    useEnt = true;
-
-                }
-            }
-            if (useEnt) {
-                ix = Mth.lerp(partialTicks, ent.xOld, ent.getX());
-                iy = Mth.lerp(partialTicks, ent.yOld, ent.getY());
-                iz = Mth.lerp(partialTicks, ent.zOld, ent.getZ());
-            } else {
-                // If the entity wasn't available at START, try to find it now
-                ent = mc.level.getEntity(inst.entityId);
-                if (ent != null && ent.isAlive() && (inst.entityUuid == null || inst.entityUuid.equals(ent.getUUID()))) {
-                    inst.entityRef = new WeakReference<>(ent);
-                    inst.entityUuid = ent.getUUID();
-                }
-                ix = Mth.lerp(partialTicks, inst.lastX, inst.x);
-                iy = Mth.lerp(partialTicks, inst.lastY, inst.y);
-                iz = Mth.lerp(partialTicks, inst.lastZ, inst.z);
-            }
+            if (!(mc.level.getEntity(inst.entityId) instanceof PokemonEntity pokemon) || !inst.canEmitFrom(pokemon)) continue;
+            double ix = Mth.lerp(partialTicks, pokemon.xOld, pokemon.getX());
+            double iy = Mth.lerp(partialTicks, pokemon.yOld, pokemon.getY());
+            double iz = Mth.lerp(partialTicks, pokemon.zOld, pokemon.getZ());
             float fade = inst.fadeFactor(now);
             // Interpolate corruption
             float corruption = Mth.lerp(partialTicks, inst.prevCorruption, inst.lastCorruption);
@@ -353,31 +344,11 @@ public final class ShadowAuraEmitters {
             boolean hasVisibility = fade > 0.001f && corruption > 0.01f;
             if (!hasVisibility) continue;
 
-            if (auraReaderRequired && !hasAuraReader) {
-                if (ent instanceof PokemonEntity pe && pe.getPokemon().cosmeticItem().is(ModItems.SHADOW_SHARD.get())) {
-                    // Bypass Aura Reader requirement for Shadow Shard cosmetic item
-                } else {
-                    continue;
-                }
-            }
+            if (auraReaderRequired && !hasAuraReader && !pokemon.getPokemon().cosmeticItem().is(ModItems.SHADOW_SHARD.get())) continue;
 
-            if (ent instanceof PokemonEntity pokemonEntity) {
-                float entityHeight = Math.max(0.1f, Mth.lerp(partialTicks, inst.prevBbH, inst.lastBbH));
-                float radius = Math.max(0.25f, Mth.lerp(partialTicks, (float) inst.prevBbSize, (float) inst.lastBbSize));
-
-                ShadowPokemonAuraSystem.observe(
-                        pokemonEntity,
-                        ix,
-                        iy,
-                        iz,
-                        radius,
-                        entityHeight,
-                        fade,
-                        corruption,
-                        partialTicks
-                );
-                continue;
-            }
+            float entityHeight = Math.max(0.1f, Mth.lerp(partialTicks, inst.prevBbH, inst.lastBbH));
+            float radius = Math.max(0.25f, Mth.lerp(partialTicks, (float) inst.prevBbSize, (float) inst.lastBbSize));
+            ShadowPokemonAuraSystem.observe(pokemon, ix, iy, iz, radius, entityHeight, fade, corruption, partialTicks);
         }
     }
 
@@ -386,6 +357,7 @@ public final class ShadowAuraEmitters {
         private int fadeInTicks;
         private int sustainTicks;
         private int fadeOutTicks;
+        private boolean emissionEnded;
 
         // Entity reference for client-side interpolation
         private int entityId;
@@ -438,6 +410,21 @@ public final class ShadowAuraEmitters {
             return (entityRef != null) ? entityRef.get() : null;
         }
 
+        boolean canEmitFrom(PokemonEntity pokemon) {
+            if (emissionEnded || (entityUuid != null && !entityUuid.equals(pokemon.getUUID()))) return false;
+            // Cobblemon begins shrinking before the authoritative FADE_OUT arrives.
+            // Release this pose now; the already-emitted puffs finish their own simulation.
+            if (!pokemon.isAlive() || pokemon.getBeamMode() == 3) {
+                ShadowPokemonAuraSystem.onPokemonDespawn(entityId);
+                return false;
+            }
+            if (entityUuid == null) {
+                entityUuid = pokemon.getUUID();
+                entityRef = new WeakReference<>(pokemon);
+            }
+            return true;
+        }
+
         public void updateSound() {
             var mc = Minecraft.getInstance();
             if (mc == null || mc.level == null || mc.isPaused()) return;
@@ -468,6 +455,7 @@ public final class ShadowAuraEmitters {
         }
 
         void beginImmediateFadeOut(long now, int outTicks) {
+            emissionEnded = true;
             this.startTick = now - (long) this.fadeInTicks - (long) this.sustainTicks;
             this.fadeOutTicks = Math.max(1, outTicks);
         }

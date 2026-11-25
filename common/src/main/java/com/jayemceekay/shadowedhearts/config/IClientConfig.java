@@ -8,6 +8,7 @@ public interface IClientConfig extends IModConfig {
     default ClientEffectPolicy.EffectOverride auraEffects() { return ClientEffectPolicy.EffectOverride.INHERIT; }
     default ClientEffectPolicy.EffectOverride ambientEffects() { return ClientEffectPolicy.EffectOverride.INHERIT; }
     default boolean enableShadowAura() { return true; }
+    default boolean debugShadowAuraEmitters() { return false; }
     default AuraRenderQuality auraRenderQuality() { return AuraRenderQuality.QUALITY; }
     default AuraPixelationStyle signatureAuraPixelation() { return AuraPixelationStyle.PIXELATED; }
     default AuraPixelationStyle colosseumAuraPixelation() { return AuraPixelationStyle.SMOOTH; }

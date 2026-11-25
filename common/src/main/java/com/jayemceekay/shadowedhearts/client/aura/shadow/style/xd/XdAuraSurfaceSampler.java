@@ -68,7 +68,7 @@ public final class XdAuraSurfaceSampler {
         normalPose.invert().transpose();
         List<Cube> result = new ArrayList<>();
         for (ModelPart.Cube cube : part.cubes) {
-            List<Face> local = LOCAL_FACES.computeIfAbsent(cube, XdAuraSurfaceSampler::localFaces);
+            List<Face> local = localFacesOf(cube);
             List<Face> faces = new ArrayList<>(local.size());
             double area = 0;
             for (Face face : local) {
@@ -138,6 +138,11 @@ public final class XdAuraSurfaceSampler {
             }
         }
         return true;
+    }
+
+    /** Immutable baked faces shared by surface effects. Coordinates are in model-part blocks. */
+    public static List<Face> localFacesOf(ModelPart.Cube cube) {
+        return LOCAL_FACES.computeIfAbsent(cube, XdAuraSurfaceSampler::localFaces);
     }
 
     private static List<Face> localFaces(ModelPart.Cube cube) {

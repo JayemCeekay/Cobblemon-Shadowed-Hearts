@@ -28,6 +28,10 @@ public final class ClientEffects {
     }
 
     public static float auraQuality() { return ClientEffectPolicy.auraQuality(level(Family.AURA)); }
+    public static boolean showAuraEmitters() {
+        return ShadowedHeartsConfigs.getInstance().getClientConfig().debugShadowAuraEmitters();
+    }
+
     public static boolean auraPerformanceMode() {
         return ShadowedHeartsConfigs.getInstance().getClientConfig().auraRenderQuality()
                 == AuraRenderQuality.PERFORMANCE;

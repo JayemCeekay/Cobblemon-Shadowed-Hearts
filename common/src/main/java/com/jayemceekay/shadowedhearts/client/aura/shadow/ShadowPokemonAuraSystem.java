@@ -20,6 +20,7 @@ import com.cobblemon.mod.common.client.render.models.blockbench.repository.Rende
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
 import com.cobblemon.mod.common.pokemon.RenderablePokemon;
 import com.jayemceekay.shadowedhearts.client.ClientEffects;
+import com.jayemceekay.shadowedhearts.client.aura.shadow.AuraEmitterDebug.Kind;
 import com.jayemceekay.shadowedhearts.client.aura.shadow.ClassicAuraRegions.ClassicPartGeometry;
 import com.jayemceekay.shadowedhearts.client.aura.shadow.ClassicAuraRegions.ClassicRegion;
 import com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.BoneAnchor;
@@ -54,6 +55,7 @@ import net.minecraft.world.phys.AABB;
 import org.joml.Matrix4f;
 import org.joml.Matrix3f;
 import org.joml.Quaternionf;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 
@@ -73,7 +75,6 @@ import java.util.function.IntSupplier;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPerformanceBudget.MAX_PUFFS;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPerformanceBudget.adaptiveEmitterScale;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPerformanceBudget.boneEmissionInterval;
-import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPerformanceBudget.boneEmitterTargetCount;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPerformanceBudget.puffRenderQuality;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPixelationScale.maximumWorldPixelLod;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.AuraPixelationScale.stabilizedWorldPixelLod;
@@ -83,24 +84,19 @@ import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelA
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.collectRenderedBoneChainAnchors;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.downsampleBoneAnchors;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.fallbackBoneAnchors;
-import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.modelAnchorRecenterOffset;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.renderedPartSample;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.shiftedBoneAnchors;
-import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelAnchors.smallModelCoverageBoost;
 
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelGeometry.MAX_BONE_ANCHORS;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelGeometry.boneAnchorBudget;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelGeometry.cubeTemplate;
 import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelGeometry.estimateModelGeometry;
-import static com.jayemceekay.shadowedhearts.client.aura.shadow.ShadowAuraModelGeometry.halton;
 
 /**
  * Penumbra-derived FBO aura for shadow Pokemon.
  *
  * <p>The base aura is driven by large density puffs emitted from Cobblemon's
- * posed model bones, with the old hitbox emitter kept only as a fallback.
- * That keeps the aura flexible across very different Pokemon proportions
- * while preserving the soft density-field look of the Penumbra trail.
+ * posed model surfaces. Before a pose is available it samples a hitbox shell.
  */
 public final class ShadowPokemonAuraSystem {
 
@@ -111,16 +107,11 @@ public final class ShadowPokemonAuraSystem {
 
     private static final int FULLBRIGHT = 0x00F000F0;
     private static final int BONE_ANCHOR_CANDIDATE_MULTIPLIER = 4;
-    private static final int BODY_ANCHOR_FILL_EMITTERS_PER_TICK = 22;
-    private static final int BODY_VOLUME_EMITTERS_PER_TICK = 18;
-    private static final boolean ENABLE_HITBOX_AURA_EMITTERS = true;
-    private static final float BODY_ANCHOR_FILL_STRENGTH = 0.18f;
-    private static final float BODY_VOLUME_FILL_STRENGTH = 0.32f;
-    private static final int SMALL_MODEL_UPPER_FILL_EMITTERS_PER_TICK = 18;
-    private static final float SMALL_MODEL_UPPER_FILL_STRENGTH = 0.16f;
     private static final float BODY_CUBE_ANCHOR_BUDGET_FRACTION = 0.58f;
     private static final float MIN_MASK_RENDER_QUALITY = 0.30f;
     private static final float MIN_PIXEL_MODEL_SIZE = 0.05f;
+    private static final float SIGNATURE_SURFACE_RELEASE = 0.55f;
+    private static final float SIGNATURE_WAKE_RELEASE = 0.36f;
     // Must match the outer smoothstep thresholds in the XD filament shader.
     // These let model-space profile widths choose a billboard large enough for
     // both the bright core and its violet halo.
@@ -145,6 +136,7 @@ public final class ShadowPokemonAuraSystem {
             initialWorldPixelLods();
     private static boolean worldCompositePending;
     private static ColosseumMoteFrame pendingColosseumMoteFrame;
+    private static AuraEmitterDebug.WorldFrame pendingEmitterMarkers;
     private static final Set<ShadowAuraRenderBatch> WORLD_PENDING_BATCHES = new LinkedHashSet<>();
     private record WorldPixelGrid(AuraPixelationStyle style, double normalizedSize) { }
     private static final Map<ShadowAuraStyle, WorldPixelGrid> WORLD_PIXEL_GRIDS =
@@ -185,29 +177,16 @@ public final class ShadowPokemonAuraSystem {
         state.pixelCenterY = y + height * 0.5;
         state.pixelCenterZ = z;
         state.pixelModelSize = Math.max(entity.getBbWidth(), height);
+        Vec3 entityBase = new Vec3(x, y, z);
+        if (state.style == ShadowAuraStyle.SIGNATURE) state.updateSignatureLocation(entityBase, gameTime);
 
         int emissionInterval = boneEmissionInterval(quality);
         if (state.lastEmitTick != Long.MIN_VALUE && gameTime - state.lastEmitTick < emissionInterval) {
-            state.x = x;
-            state.y = y;
-            state.z = z;
             return;
         }
-
-        double dx = x - state.x;
-        double dy = y - state.y;
-        double dz = z - state.z;
-        Vec3 tickMotion = new Vec3(dx, dy, dz);
-        Vec3 entityMotion = entity.getDeltaMovement();
-        Vec3 motion = tickMotion.lengthSqr() > entityMotion.lengthSqr() ? tickMotion : entityMotion;
-        double speed = motion.length();
-
-        state.x = x;
-        state.y = y;
-        state.z = z;
         state.lastEmitTick = gameTime;
 
-        long poseGraceTicks = state.style == ShadowAuraStyle.SIGNATURE ? 2L : Math.max(2, emissionInterval + 1);
+        long poseGraceTicks = Math.max(2, emissionInterval + 1);
         if (state.lastBoneTick != Long.MIN_VALUE && gameTime - state.lastBoneTick <= poseGraceTicks) {
             return;
         }
@@ -220,7 +199,7 @@ public final class ShadowPokemonAuraSystem {
             state.classicGeometry.clear();
             state.xdSurfaceCubes.clear();
             emitModelAura(EmitterFrame.fromEntity(entity, partialTicks), state,
-                    shiftedBoneAnchors(fallbackBoneAnchors(safeRadius * 2.0f, safeHeight), new Vec3(x, y, z)),
+                    shiftedBoneAnchors(fallbackBoneAnchors(safeRadius * 2.0f, safeHeight), entityBase),
                     intensity, quality, WORLD_PARTICLES);
             if (state.style == ShadowAuraStyle.COLOSSEUM && state.colosseumVolume != null) {
                 LuminousMoteEmitters.observe(entity, state.colosseumVolume.modelBounds());
@@ -228,29 +207,11 @@ public final class ShadowPokemonAuraSystem {
             return;
         }
 
-        float animationPhase = (entity.tickCount + partialTicks) * 0.18f + state.seed;
-        float breathing = 0.82f + 0.18f * (float) Math.sin(animationPhase * 1.7f);
-        int baseCount = Math.max(5, Math.min(30, (int) (5 + safeRadius * 4.0f + safeHeight * 1.2f)));
-        int motionBonus = Math.min(18, (int) (speed * 48.0));
-        ShadowAuraStyleProfile styleProfile = ShadowAuraStyleProfiles.forStyle(state.style);
-        int count = Math.max(1, (int) ((baseCount + motionBonus) * intensity * breathing
-                * adaptiveEmitterScale(quality)
-                * styleProfile.emission().rateScale()
-                * styleProfile.emission().fallbackEmitterScale()));
-        count = state.performanceBudget.signatureFallbackCount(count);
-
-        Vec3 motionDir = speed > 0.0001 ? motion.normalize() : Vec3.ZERO;
-        for (int i = 0; i < count; i++) {
-            PuffType type = pickType(speed, styleProfile, RANDOM);
-            spawnPuff(
-                    state,
-                    x, y, z,
-                    safeRadius, safeHeight,
-                    fade, corruption,
-                    motionDir, speed,
-                    animationPhase, type
-            );
-        }
+        if (state.signatureFrame.isPosed()) state.startSignatureFrame(entityBase, gameTime);
+        state.signatureLayout.clearFollowPose();
+        emitSignatureSurface(EmitterFrame.fromEntity(entity, partialTicks), state,
+                SignatureSurfaceLayout.fallback(safeRadius * 2, safeHeight, Vec3.ZERO),
+                intensity, quality, WORLD_PARTICLES);
     }
 
     public static void beginRenderedModelAnchorCapture(PokemonEntity entity, PoseStack renderStack, Bone rootPart) {
@@ -288,27 +249,35 @@ public final class ShadowPokemonAuraSystem {
         state.modeTint = ShadowAuraRenderBatch.hasModeTint(entity.getAspects());
         if (state.style == ShadowAuraStyle.COLOSSEUM) LuminousMoteEmitters.observe(entity);
         state.lastSeenTick = gameTime;
-        state.lastBoneTick = gameTime;
+        if (state.style != ShadowAuraStyle.SIGNATURE) state.lastBoneTick = gameTime;
         state.fade = strength;
         state.corruption = 1.0f;
         state.quality = quality;
-        state.x = x;
-        state.y = y;
-        state.z = z;
         state.pixelCenterX = x;
         state.pixelCenterY = y + entity.getBbHeight() * 0.5;
         state.pixelCenterZ = z;
         state.pixelModelSize = Math.max(entity.getBbWidth(), entity.getBbHeight());
 
+        Vec3 sourceWorld = new Vec3(x, y, z);
+        if (state.style == ShadowAuraStyle.SIGNATURE) {
+            Matrix4f root = renderStack.last().pose();
+            if (!root.isFinite() || Math.abs(root.determinant3x3()) < 1.0e-12f) return;
+            state.updateSignaturePose(sourceWorld, cameraPos, root, gameTime);
+        }
         int emissionInterval = boneEmissionInterval(quality);
         if (state.lastBoneEmitTick != Long.MIN_VALUE && gameTime - state.lastBoneEmitTick < emissionInterval) {
             return;
         }
 
-        Vector3f rawModelOrigin = renderStack.last().pose().transformPosition(0.0f, 0.0f, 0.0f, new Vector3f());
-        Vec3 sourceWorld = new Vec3(x, y, z);
-        Vec3 poseToWorldOffset = sourceWorld.subtract(rawModelOrigin.x, rawModelOrigin.y, rawModelOrigin.z);
-        int anchorBudget = adaptiveAnchorBudget(boneAnchorBudget(estimateModelGeometry(rootPart, 0)), quality);
+        // The world entity stack is camera-relative. Keep the mounted renderer's pivot
+        // translation when it banks the model around the middle of the hitbox.
+        Vec3 poseToWorldOffset = cameraPos;
+        if (state.style != ShadowAuraStyle.SIGNATURE) {
+            Matrix4f modelPose = renderStack.last().pose();
+            poseToWorldOffset = sourceWorld.subtract(modelPose.m30(), modelPose.m31(), modelPose.m32());
+        }
+        int anchorBudget = state.style == ShadowAuraStyle.SIGNATURE ? 0
+                : adaptiveAnchorBudget(boneAnchorBudget(estimateModelGeometry(rootPart, 0)), quality);
         int candidateBudget = Math.min(MAX_BONE_ANCHORS * BONE_ANCHOR_CANDIDATE_MULTIPLIER,
                 Math.max(anchorBudget, anchorBudget * BONE_ANCHOR_CANDIDATE_MULTIPLIER));
         int bodyAnchorBudget = Math.min(anchorBudget - 24, Math.max(42, Math.round(anchorBudget * BODY_CUBE_ANCHOR_BUDGET_FRACTION)));
@@ -333,8 +302,14 @@ public final class ShadowPokemonAuraSystem {
         if (capture == null || part == null || stack == null) {
             return;
         }
-        if (capture.state.style == ShadowAuraStyle.SIGNATURE
-                && capture.anchorCandidates.size() >= capture.candidateBudget) return;
+        if (capture.state.style == ShadowAuraStyle.SIGNATURE) {
+            Matrix4f partPose = stack.last().pose();
+            if (capture.signatureToLocal != null) {
+                partPose = capture.signatureToLocal.mul(partPose, capture.signaturePartPose);
+            }
+            capture.signaturePose.add(part, partPose);
+            return;
+        }
 
         int depth = capture.renderedPartStack.size() + 1;
         RenderedPartSample sample = renderedPartSample(part, stack, capture.poseToWorldOffset);
@@ -344,17 +319,15 @@ public final class ShadowPokemonAuraSystem {
                 ? null
                 : capture.renderedPartStack.get(capture.renderedPartStack.size() - 1);
 
-        if (capture.state.style != ShadowAuraStyle.SIGNATURE) {
-            capture.classicGeometry.put(part, describeClassicPart(part, stack.last().pose(),
-                    capture.poseToWorldOffset, parent == null ? null : parent.part, xdHidden));
-        }
+        capture.classicGeometry.put(part, describeClassicPart(part, stack.last().pose(),
+                capture.poseToWorldOffset, parent == null ? null : parent.part, xdHidden));
         if (capture.state.style == ShadowAuraStyle.XD_FAITHFUL) {
             capture.xdSurfaceParts.put(part, captureXdSurfaces(part, stack.last().pose(), capture.poseToWorldOffset));
         }
 
         if (sample.chainable() && parent != null && parent.chainable && capture.anchorCandidates.size() < capture.candidateBudget) {
             collectRenderedBoneChainAnchors(
-                    capture.state.style == ShadowAuraStyle.SIGNATURE ? null : part,
+                    part,
                     capture.state.classicAnchors,
                     parent.geometryWorld,
                     sample.geometryWorld(),
@@ -375,7 +348,7 @@ public final class ShadowPokemonAuraSystem {
                 capture.candidateBudget,
                 capture.bodyAnchorBudget,
                 capture.bodyAnchorCount,
-                capture.state.style != ShadowAuraStyle.SIGNATURE
+                true
         );
 
         if (sample.chainable()
@@ -414,17 +387,17 @@ public final class ShadowPokemonAuraSystem {
             return;
         }
 
-        List<BoneAnchor> anchors = downsampleBoneAnchors(capture.anchorCandidates, capture.anchorBudget);
+        List<BoneAnchor> anchors = capture.state.style == ShadowAuraStyle.SIGNATURE
+                ? capture.state.signatureLayout.resolve(capture.signaturePose,
+                        capture.signatureToLocal == null ? capture.poseToWorldOffset : Vec3.ZERO,
+                        Math.max(entity.getBbWidth(), entity.getBbHeight()))
+                : downsampleBoneAnchors(capture.anchorCandidates, capture.anchorBudget);
         if (anchors.isEmpty()) {
+            if (capture.state.style == ShadowAuraStyle.SIGNATURE) capture.state.signatureAnchors.clear();
             return;
         }
 
-        Vec3 recenterOffset = capture.state.style == ShadowAuraStyle.SIGNATURE
-                ? modelAnchorRecenterOffset(capture.entity, anchors, capture.sourceWorld) : Vec3.ZERO;
-        if (recenterOffset.lengthSqr() > 0.000001) {
-            anchors = shiftedBoneAnchors(anchors, recenterOffset);
-        }
-
+        capture.state.lastBoneTick = capture.gameTime;
         EmitterFrame frame = EmitterFrame.fromEntity(capture.entity, capture.partialTicks);
         capture.state.classicGeometry.clear();
         capture.state.classicGeometry.putAll(capture.classicGeometry);
@@ -438,10 +411,17 @@ public final class ShadowPokemonAuraSystem {
 
     public static void onPokemonDespawn(int entityId) {
         SourceState removed = SOURCES.remove(entityId);
-        if (removed != null) removed.classicAnchors.clear();
+        if (removed != null) {
+            pendingEmitterMarkers = null;
+            removed.classicAnchors.clear();
+            removed.signatureAnchors.clear();
+            removed.signatureLayout.clearFollowPose();
+            removed.signatureFrame = null;
+        }
     }
 
     public static void clear() {
+        pendingEmitterMarkers = null;
         synchronized (ACTIVE) {
             ACTIVE.clear();
             WORLD_PARTICLES.wisps.clear();
@@ -517,6 +497,15 @@ public final class ShadowPokemonAuraSystem {
             return sourceState != null && sourceState.modeTint;
         }
 
+        List<AuraEmitterDebug.Dot> emitterMarkers() {
+            List<AuraEmitterDebug.Dot> dots = new ArrayList<>();
+            if (style == ShadowAuraStyle.SIGNATURE) {
+                for (BoneAnchor anchor : latestAnchors) dots.add(AuraEmitterDebug.surface(anchor));
+            }
+            if (sourceState.debugBirths != null) sourceState.debugBirths.append(particles.tickSerial, dots);
+            return dots;
+        }
+
         public EnumSet<ShadowAuraStyle> activeStyles() {
             EnumSet<ShadowAuraStyle> styles = EnumSet.of(style);
             if (particles != null) synchronized (particles.active) {
@@ -532,6 +521,10 @@ public final class ShadowPokemonAuraSystem {
 
         public boolean hasPose() {
             return !latestAnchors.isEmpty();
+        }
+
+        boolean needsSurfaceFallback() {
+            return style == ShadowAuraStyle.SIGNATURE && (fallbackPose || !hasPose());
         }
 
         float pixelationModelSize() { return Math.max(width, height); }
@@ -629,7 +622,8 @@ public final class ShadowPokemonAuraSystem {
             }
             lastPoseCaptureNanos = nowNanos;
 
-            int anchorBudget = adaptiveAnchorBudget(boneAnchorBudget(estimateModelGeometry(rootPart, 0)), 1.0f);
+            int anchorBudget = style == ShadowAuraStyle.SIGNATURE ? 0
+                    : adaptiveAnchorBudget(boneAnchorBudget(estimateModelGeometry(rootPart, 0)), 1.0f);
             int candidateBudget = Math.min(
                     MAX_BONE_ANCHORS * BONE_ANCHOR_CANDIDATE_MULTIPLIER,
                     Math.max(anchorBudget, anchorBudget * BONE_ANCHOR_CANDIDATE_MULTIPLIER)
@@ -669,8 +663,10 @@ public final class ShadowPokemonAuraSystem {
             if (!canonicalPose.isFinite()) {
                 return;
             }
-            if (style == ShadowAuraStyle.SIGNATURE
-                    && capture.anchorCandidates.size() >= capture.candidateBudget) return;
+            if (style == ShadowAuraStyle.SIGNATURE) {
+                capture.signaturePose.add(part, canonicalPose);
+                return;
+            }
             Matrix3f canonicalNormal = new Matrix3f(canonicalPose);
             float normalDeterminant = canonicalNormal.determinant();
             if (!Float.isFinite(normalDeterminant) || Math.abs(normalDeterminant) <= 1.0e-12f) {
@@ -691,10 +687,8 @@ public final class ShadowPokemonAuraSystem {
                     ? null
                     : capture.renderedPartStack.get(capture.renderedPartStack.size() - 1);
 
-            if (style != ShadowAuraStyle.SIGNATURE) {
-                capture.classicGeometry.put(part, describeClassicPart(part, canonicalPose,
-                        Vec3.ZERO, parent == null ? null : parent.part, xdHidden));
-            }
+            capture.classicGeometry.put(part, describeClassicPart(part, canonicalPose,
+                    Vec3.ZERO, parent == null ? null : parent.part, xdHidden));
             if (style == ShadowAuraStyle.XD_FAITHFUL) {
                 capture.xdSurfaceParts.put(part, captureXdSurfaces(part, canonicalPose, Vec3.ZERO));
             }
@@ -702,7 +696,7 @@ public final class ShadowPokemonAuraSystem {
             if (sample.chainable() && parent != null && parent.chainable
                     && capture.anchorCandidates.size() < capture.candidateBudget) {
                 collectRenderedBoneChainAnchors(
-                        style == ShadowAuraStyle.SIGNATURE ? null : part,
+                        part,
                         sourceState.classicAnchors,
                         parent.geometryWorld,
                         sample.geometryWorld(),
@@ -723,7 +717,7 @@ public final class ShadowPokemonAuraSystem {
                     capture.candidateBudget,
                     capture.bodyAnchorBudget,
                     capture.bodyAnchorCount,
-                    style != ShadowAuraStyle.SIGNATURE
+                    true
             );
 
             if (sample.chainable()
@@ -766,17 +760,17 @@ public final class ShadowPokemonAuraSystem {
                 return false;
             }
 
-            List<BoneAnchor> anchors = downsampleBoneAnchors(capture.anchorCandidates, capture.anchorBudget);
+            List<BoneAnchor> anchors = style == ShadowAuraStyle.SIGNATURE
+                    ? sourceState.signatureLayout.resolve(capture.signaturePose, Vec3.ZERO,
+                            Math.max(capture.width, capture.height))
+                    : downsampleBoneAnchors(capture.anchorCandidates, capture.anchorBudget);
             if (anchors.isEmpty()) {
+                if (style == ShadowAuraStyle.SIGNATURE) {
+                    latestAnchors = List.of();
+                    sourceState.signatureAnchors.clear();
+                }
                 return false;
             }
-            float modelSize = Math.max(capture.width, capture.height);
-            Vec3 recenterOffset = style == ShadowAuraStyle.SIGNATURE
-                    ? modelAnchorRecenterOffset(anchors, Vec3.ZERO, modelSize) : Vec3.ZERO;
-            if (recenterOffset.lengthSqr() > 0.000001) {
-                anchors = shiftedBoneAnchors(anchors, recenterOffset);
-            }
-
             latestAnchors = List.copyOf(anchors);
             sourceState.classicGeometry.clear();
             sourceState.classicGeometry.putAll(capture.classicGeometry);
@@ -785,7 +779,7 @@ public final class ShadowPokemonAuraSystem {
             width = capture.width;
             height = capture.height;
             if (fallbackPose) {
-                sourceState.lastBoneAnchors.clear();
+                sourceState.signatureAnchors.clear();
                 sourceState.classicAnchors.clear();
             }
             fallbackPose = false;
@@ -802,10 +796,12 @@ public final class ShadowPokemonAuraSystem {
                 return;
             }
             if (!fallbackPose || latestAnchors.isEmpty()) {
-                latestAnchors = fallbackBoneAnchors(width, height);
-                sourceState.lastBoneAnchors.clear();
+                latestAnchors = style == ShadowAuraStyle.SIGNATURE ? SignatureSurfaceLayout.fallback(width, height, Vec3.ZERO)
+                        : fallbackBoneAnchors(width, height);
+                sourceState.signatureAnchors.clear();
                 sourceState.classicAnchors.clear();
                 sourceState.classicGeometry.clear();
+                sourceState.signatureLayout.clearFollowPose();
                 sourceState.xdSurfaceCubes.clear();
                 fallbackPose = true;
             }
@@ -823,7 +819,7 @@ public final class ShadowPokemonAuraSystem {
             }
         }
 
-        /** Advances this preview with the same emission order, fill passes, and puff integration as the world path. */
+        /** Advances the same surface emission and puff simulation used in the world. */
         public boolean advance(long nowNanos, float strength) {
             if (particles == null || sourceState == null || latestAnchors.isEmpty()) {
                 lastNanos = nowNanos;
@@ -888,6 +884,8 @@ public final class ShadowPokemonAuraSystem {
                 return;
             }
             float partial = Mth.clamp(partialTicks, 0.0f, 1.0f);
+            Vector3d position = new Vector3d();
+            Vector3d velocity = new Vector3d();
             synchronized (particles.active) {
                 for (Puff puff : particles.active) {
                     if (puff.style != renderStyle || isXdFlake(puff)) continue;
@@ -913,29 +911,14 @@ public final class ShadowPokemonAuraSystem {
                     if (puff.style == ShadowAuraStyle.COLOSSEUM && puff.type != PuffType.HOT_FLECK) {
                         sparkWeight = ColosseumSmokeAppearance.ageChannel(puff.age + partial, puff.lifetime);
                     }
-                    float wispWeight = switch (puff.type) {
-                        case BROAD_HAZE -> 0.05f;
-                        case CORE_HAZE -> 0.25f;
-                        case WISP -> 1.00f;
-                        case HOT_FLECK -> 0.25f;
-                        case FILAMENT -> 1.00f;
-                    };
-                    double velocityX = Mth.lerp(partial, puff.xdo, puff.xd);
-                    double velocityY = Mth.lerp(partial, puff.ydo, puff.yd);
-                    double velocityZ = Mth.lerp(partial, puff.zdo, puff.zd);
-                    double speed = Math.sqrt(
-                            velocityX * velocityX
-                                    + velocityY * velocityY
-                                    + velocityZ * velocityZ
-                    );
+                    float wispWeight = sampleWispWeight(puff, partial);
+                    puff.renderPosition(partial, position);
+                    puff.renderVelocity(partial, velocity);
+                    double speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
                     PuffStretch stretch = samplePuffStretch(puff.type, speed);
                     consumer.accept(
-                            Mth.lerp(partial, puff.xo, puff.x),
-                            Mth.lerp(partial, puff.yo, puff.y),
-                            Mth.lerp(partial, puff.zo, puff.z),
-                            velocityX,
-                            velocityY,
-                            velocityZ,
+                            position.x, position.y, position.z,
+                            velocity.x, velocity.y, velocity.z,
                             size,
                             alpha,
                             puff.rotation,
@@ -1014,6 +997,7 @@ public final class ShadowPokemonAuraSystem {
         // Existing puffs retain the style captured at spawn so recall tails
         // and live aspect changes drain with their original material.
         state.style = safeStyle;
+        state.debugBirths = null;
         state.classicAnchors.clear();
         state.classicRegions.clear();
         state.classicGeometry.clear();
@@ -1028,17 +1012,11 @@ public final class ShadowPokemonAuraSystem {
         state.xdCurveBirthCarry = 0;
         state.xdFlakeBirthCarry = 0;
         state.xdHazeBirthCarry = 0;
-        state.lastBoneAnchors.clear();
-        state.bodySampleCursor = 0;
-        state.bodyAnchorFillCursor = 0;
-        state.upperBodyAnchorFillCursor = 0;
-        state.boneEmitterCursor = 0;
-        state.appendageEmitterCursor = 0;
+        state.signatureAnchors.clear();
+        state.signatureLayout.clearFollowPose();
+        state.signatureFrame = null;
         state.surfaceEmitterCursor = 0;
-        state.tipEmitterCursor = 0;
-        state.xdBurstEmitterCursor = 0;
-        state.nextXdBurstTick = Long.MIN_VALUE;
-        state.hasLastBodyCenter = false;
+        state.surfaceBirthCarry = 0;
     }
 
     private static long previewSeed(String identity) {
@@ -1219,6 +1197,7 @@ public final class ShadowPokemonAuraSystem {
                         worldPixelGrid(batch.style()));
             }
             renderLateColosseumMotes();
+            drawWorldEmitterMarkers(lastRenderFrameToken);
         } finally {
             worldCompositePending = false;
             WORLD_PENDING_BATCHES.clear();
@@ -1320,8 +1299,10 @@ public final class ShadowPokemonAuraSystem {
             maskBatches.addAll(MASK_CAPTURED_BATCHES);
         }
         boolean hasModelMask = !maskBatches.isEmpty();
+        pendingEmitterMarkers = ClientEffects.showAuraEmitters()
+                ? collectWorldEmitterMarkers(camera, frameToken, gameTime) : null;
 
-        if (!hasPuffs && !hasModelMask && !hasLateMotes) {
+        if (!hasPuffs && !hasModelMask && !hasLateMotes && pendingEmitterMarkers == null) {
             updateWorldPixelLodsForFrame(null, puffStyles);
             WORLD_PIXEL_GRIDS.clear();
             worldCompositePending = false;
@@ -1371,7 +1352,7 @@ public final class ShadowPokemonAuraSystem {
         );
         updateWorldPixelGrids(camera, visiblePixelContributors);
 
-        if (!renderedBatches.isEmpty() || pendingColosseumMoteFrame != null) {
+        if (!renderedBatches.isEmpty() || pendingColosseumMoteFrame != null || pendingEmitterMarkers != null) {
             if (compositeNow) {
                 for (ShadowAuraRenderBatch batch : renderedBatches) {
                     ShadowPokemonAuraFBO.blur(batch);
@@ -1381,6 +1362,7 @@ public final class ShadowPokemonAuraSystem {
                             worldPixelGrid(batch.style()));
                 }
                 renderLateColosseumMotes();
+                drawWorldEmitterMarkers(frameToken);
                 worldCompositePending = false;
                 WORLD_PENDING_BATCHES.clear();
             } else {
@@ -1391,6 +1373,49 @@ public final class ShadowPokemonAuraSystem {
         } else {
             worldCompositePending = false;
             WORLD_PENDING_BATCHES.clear();
+        }
+    }
+
+    private static AuraEmitterDebug.WorldFrame collectWorldEmitterMarkers(Camera camera, long frameToken, long gameTime) {
+        List<AuraEmitterDebug.Dot> dots = new ArrayList<>();
+        Vector3d scratch = new Vector3d();
+        for (SourceState source : SOURCES.values()) {
+            if (gameTime - source.lastSeenTick > 1) continue;
+            if (source.style == ShadowAuraStyle.SIGNATURE) {
+                for (BoneAnchor site : source.signatureAnchors.values()) {
+                    if (source.signatureFrame == null) {
+                        dots.add(AuraEmitterDebug.surface(site));
+                        continue;
+                    }
+                    Vec3 normal = site.normal();
+                    source.signatureFrame.toWorldDirection(scratch.set(normal.x, normal.y, normal.z));
+                    double worldNormalY = scratch.y;
+                    Vec3 position = site.pos();
+                    source.signatureFrame.toWorldPosition(scratch.set(position.x, position.y, position.z));
+                    dots.add(AuraEmitterDebug.surface(site, new Vec3(scratch.x, scratch.y, scratch.z), worldNormalY));
+                }
+            }
+            if (source.debugBirths != null) source.debugBirths.append(WORLD_PARTICLES.tickSerial, dots);
+        }
+        if (dots.isEmpty()) return null;
+        return new AuraEmitterDebug.WorldFrame(frameToken, camera.getPosition(), AuraEmitterDebug.currentTransform(), dots);
+    }
+
+    private static void drawWorldEmitterMarkers(long frameToken) {
+        AuraEmitterDebug.WorldFrame frame = pendingEmitterMarkers;
+        pendingEmitterMarkers = null;
+        if (frame != null && frame.token() == frameToken && ClientEffects.showAuraEmitters()) {
+            AuraEmitterDebug.draw(frame.dots(), frame.transform(), frame.camera(), -1, -1, 1, 1);
+        }
+    }
+
+    /** Called on actual ParticleEngine births, including Signature's separate luminous-mote layer. */
+    public static void recordMoteEmitter(PokemonEntity pokemon, double x, double y, double z) {
+        if (!ClientEffects.showAuraEmitters()) return;
+        SourceState source = SOURCES.get(pokemon.getId());
+        if (source != null) {
+            if (source.debugBirths == null) source.debugBirths = new AuraEmitterDebug.Births();
+            source.debugBirths.add(WORLD_PARTICLES.tickSerial, new Vec3(x, y, z), Kind.MOTE);
         }
     }
 
@@ -1658,27 +1683,11 @@ public final class ShadowPokemonAuraSystem {
         // Keep render-quality changes local to admission. Existing particles keep
         // their age, movement and lifetime while the new population settles.
         state.performanceBudget = AuraPerformanceBudget.forMode(ClientEffects.auraPerformanceMode());
-        ShadowAuraStyleProfile profile = ShadowAuraStyleProfiles.forStyle(state.style);
-        if (state.style != ShadowAuraStyle.SIGNATURE) {
-            emitClassicAura(frame, state, anchors, strength, quality, particles, profile);
-            rememberBoneAnchors(state, anchors);
-            return;
-        }
-        spawnBoneAuraPuffs(frame, state, anchors, strength, quality, particles);
-        spawnBodyAnchorFillPuffs(frame, state, anchors, strength, quality, particles);
-        spawnSmallModelUpperAnchorFillPuffs(frame, state, anchors, strength, quality, particles);
-        if (ENABLE_HITBOX_AURA_EMITTERS) {
-            spawnBodyVolumeAuraPuffs(frame, state, strength, quality, particles);
-        }
-
-        rememberBoneAnchors(state, anchors);
-    }
-
-    private static void rememberBoneAnchors(SourceState state,
-                                            List<BoneAnchor> anchors) {
-        state.lastBoneAnchors.clear();
-        for (BoneAnchor anchor : anchors) {
-            state.lastBoneAnchors.add(anchor.pos());
+        if (state.style == ShadowAuraStyle.SIGNATURE) {
+            emitSignatureSurface(frame, state, anchors, strength, quality, particles);
+        } else {
+            emitClassicAura(frame, state, anchors, strength, quality, particles,
+                    ShadowAuraStyleProfiles.forStyle(state.style));
         }
     }
 
@@ -1709,6 +1718,8 @@ public final class ShadowPokemonAuraSystem {
         boolean xd = state.style == ShadowAuraStyle.XD_FAITHFUL;
         if (!xd) state.colosseumVolume = colosseumVolume(state, regions);
         if (state.lastClassicFrameTick == frame.tickCount) return;
+        if (!ClientEffects.showAuraEmitters()) state.debugBirths = null;
+        else if (state.debugBirths == null) state.debugBirths = new AuraEmitterDebug.Births();
         int interval = state.lastClassicFrameTick == Integer.MIN_VALUE ? 1
                 : Mth.clamp(frame.tickCount - state.lastClassicFrameTick, 1, 4);
         state.lastClassicFrameTick = frame.tickCount;
@@ -1829,6 +1840,7 @@ public final class ShadowPokemonAuraSystem {
             synchronized (particles.active) {
                 particles.wisps.add(new WispParticle(state, state.style, wisp, padding, region.key));
             }
+            if (state.debugBirths != null) state.debugBirths.add(particles.tickSerial, root, Kind.XD_CELL);
             region.curveOccupancy++;
             sourceCurves++;
         }
@@ -1954,6 +1966,7 @@ public final class ShadowPokemonAuraSystem {
                     PuffType.HOT_FLECK, frame.modelSize(), state, particles.random);
             mote.classic = true;
             particles.add(mote);
+            if (state.debugBirths != null) state.debugBirths.add(particles.tickSerial, position, Kind.MOTE);
             sourcePuffs++;
         }
     }
@@ -1992,6 +2005,8 @@ public final class ShadowPokemonAuraSystem {
         puff.plumeFadeStart = volume.plumeFadeStart();
         puff.plumeFadeEnd = volume.plumeFadeEnd();
         particles.add(puff);
+        if (state.debugBirths != null) state.debugBirths.add(particles.tickSerial, position,
+                infill ? Kind.COLOSSEUM_INFILL : Kind.COLOSSEUM_SMOKE);
     }
 
     private static ClassicRegion mostUndercoveredRegion(List<ClassicRegion> regions, float totalDemand,
@@ -2087,6 +2102,8 @@ public final class ShadowPokemonAuraSystem {
             puff.zd = Math.sin(puff.rotation) * local * .006 * ClassicAuraWisp.MOTION_SPEED;
         }
         particles.add(puff);
+        if (state.debugBirths != null) state.debugBirths.add(particles.tickSerial, position,
+                flake ? Kind.XD_FLAKE : Kind.XD_HAZE);
     }
 
     private static boolean isXdFlake(Puff puff) {
@@ -2125,707 +2142,107 @@ public final class ShadowPokemonAuraSystem {
                 && Double.isFinite(value.z);
     }
 
-    private static void spawnBoneAuraPuffs(EmitterFrame frame,
-                                           SourceState state,
-                                           List<BoneAnchor> anchors,
-                                           float strength,
-                                           float quality,
-                                           ParticleRuntime particles) {
-        int anchorCount = anchors.size();
-        ShadowAuraStyleProfile profile = ShadowAuraStyleProfiles.forStyle(state.style);
-        int targetCount = boneEmitterTargetCount(anchorCount, quality, profile);
+    /** A full cycle visits every retained surface site, including the outermost points on moving parts. */
+    private static void emitSignatureSurface(EmitterFrame frame, SourceState state,
+                                             List<BoneAnchor> sites, float strength, float quality,
+                                             ParticleRuntime particles) {
+        state.signatureAnchors.clear();
+        for (BoneAnchor site : sites) state.signatureAnchors.put(site.key(), site);
+        state.surfacePoseTick = particles.tickSerial;
+        if (sites.isEmpty() || strength <= 0.001f) return;
 
-        Vec3 center = frame.center(0.54f);
-        Vec3 entityMotion = frame.motion;
-        double speed = entityMotion.length();
         float modelSize = frame.modelSize();
-        float animationPhase = (frame.tickCount + frame.partialTicks) * 0.18f + state.seed;
-        float pulse = 0.84f + 0.16f * (float) Math.sin(animationPhase * 1.9f);
-        float intensity = Mth.clamp(strength * pulse * (0.74f + quality * 0.14f), 0.0f, 1.18f);
-
-        boolean[] used = new boolean[anchorCount];
-        int tipBudget = Math.min(countAnchorsByRole(anchors, AnchorRole.TIP), Math.max(5, Math.round(targetCount * 0.16f)));
-        int surfaceBudget = Math.min(countAnchorsByRole(anchors, AnchorRole.SURFACE), Math.max(12, Math.round(targetCount * 0.24f)));
-        int appendageBudget = Math.min(countAnchorsByRole(anchors, AnchorRole.APPENDAGE), Math.max(14, Math.round(targetCount * 0.32f)));
-        if (tipBudget + surfaceBudget > targetCount) {
-            surfaceBudget = Math.max(0, targetCount - tipBudget);
+        // The hitbox fallback has no extra sites. Only the larger posed layouts need a higher ceiling.
+        int maxBirths = sites.getFirst().source() == AnchorSource.SHELL ? 36 : 40;
+        int fullRate = Mth.clamp(Math.round(10f + sites.size() * 0.16f + modelSize * 1.5f), 12, maxBirths);
+        float rate = state.performanceBudget.signatureFillCount(fullRate) * adaptiveEmitterScale(quality);
+        state.surfaceBirthCarry += rate * Mth.clamp(strength, 0.0f, 1.0f);
+        int births = (int) state.surfaceBirthCarry;
+        state.surfaceBirthCarry -= births;
+        // Compact silhouettes pile several visible surfaces into the same pixels. On larger models,
+        // the lower Performance birth rate needs wider, denser puffs to bridge the spaces on a wing.
+        float largeModel = smoothstep(1.0f, 3.0f, modelSize);
+        boolean performance = state.performanceBudget == AuraPerformanceBudget.PERFORMANCE;
+        float widthScale = Mth.lerp(largeModel, 0.80f, performance ? 0.92f : 0.85f);
+        float densityScale = performance ? Mth.lerp(largeModel, 0.50f, 0.72f)
+                : Mth.lerp(largeModel, 0.42f, 0.52f);
+        int cursor = Math.floorMod(state.surfaceEmitterCursor, sites.size());
+        for (int i = 0; i < Math.min(births, sites.size()); i++) {
+            spawnSurfacePuff(state, sites.get(cursor), modelSize, widthScale, strength * densityScale, particles);
+            cursor = (cursor + 1) % sites.size();
         }
-        if (tipBudget + surfaceBudget + appendageBudget > targetCount) {
-            appendageBudget = Math.max(0, targetCount - tipBudget - surfaceBudget);
-        }
-        int emitted = 0;
-
-        emitted += emitScheduledAnchors(state, anchors, state.lastBoneAnchors, used, AnchorRole.TIP, state.tipEmitterCursor, tipBudget,
-                center, entityMotion, speed, modelSize, intensity, quality, particles);
-        state.tipEmitterCursor = advanceCursor(state.tipEmitterCursor, anchorCount, tipBudget);
-
-        emitted += emitScheduledAnchors(state, anchors, state.lastBoneAnchors, used, AnchorRole.SURFACE, state.surfaceEmitterCursor, surfaceBudget,
-                center, entityMotion, speed, modelSize, intensity, quality, particles);
-        state.surfaceEmitterCursor = advanceCursor(state.surfaceEmitterCursor, anchorCount, surfaceBudget);
-
-        emitted += emitScheduledAnchors(state, anchors, state.lastBoneAnchors, used, AnchorRole.APPENDAGE, state.appendageEmitterCursor, appendageBudget,
-                center, entityMotion, speed, modelSize, intensity, quality, particles);
-        state.appendageEmitterCursor = advanceCursor(state.appendageEmitterCursor, anchorCount, appendageBudget);
-
-        int remaining = Math.max(0, targetCount - emitted);
-        emitted += emitScheduledAnchors(state, anchors, state.lastBoneAnchors, used, null, state.boneEmitterCursor, remaining,
-                center, entityMotion, speed, modelSize, intensity, quality, particles);
-        state.boneEmitterCursor = advanceCursor(state.boneEmitterCursor, anchorCount, Math.max(emitted, 1));
+        state.surfaceEmitterCursor = cursor;
     }
 
-    private static int countAnchorsByRole(List<BoneAnchor> anchors, AnchorRole role) {
-        int count = 0;
-        for (BoneAnchor anchor : anchors) {
-            if (anchor.role() == role) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static int advanceCursor(int cursor, int anchorCount, int step) {
-        if (anchorCount <= 0) {
-            return 0;
-        }
-        return Math.floorMod(cursor + Math.max(1, step), anchorCount);
-    }
-
-    private static int emitScheduledAnchors(SourceState state,
-                                            List<BoneAnchor> anchors,
-                                            List<Vec3> previousAnchors,
-                                            boolean[] used,
-                                            AnchorRole role,
-                                            int cursor,
-                                            int budget,
-                                            Vec3 center,
-                                            Vec3 entityMotion,
-                                            double speed,
-                                            float modelSize,
-                                            float intensity,
-                                            float quality,
-                                            ParticleRuntime particles) {
-        if (budget <= 0 || anchors.isEmpty()) {
-            return 0;
-        }
-
-        int emitted = 0;
-        int anchorCount = anchors.size();
-        int start = Math.floorMod(cursor, anchorCount);
-        for (int step = 0; step < anchorCount && emitted < budget; step++) {
-            int i = (start + step) % anchorCount;
-            if (used[i]) {
-                continue;
-            }
-            BoneAnchor anchor = anchors.get(i);
-            if (role != null && anchor.role() != role) {
-                continue;
-            }
-
-            used[i] = true;
-            emitBoneAnchorPuffs(state, anchor, previousAnchors, i, center, entityMotion, speed, modelSize, intensity, quality, particles);
-            emitted++;
-        }
-        return emitted;
-    }
-
-    private static void emitBoneAnchorPuffs(SourceState state,
-                                            BoneAnchor anchor,
-                                            List<Vec3> previousAnchors,
-                                            int anchorIndex,
-                                            Vec3 center,
-                                            Vec3 entityMotion,
-                                            double speed,
-                                            float modelSize,
-                                            float intensity,
-                                            float quality,
-                                            ParticleRuntime particles) {
-        Vec3 previous = previousAnchors != null && anchorIndex < previousAnchors.size()
-                ? previousAnchors.get(anchorIndex)
-                : anchor.pos();
-        Vec3 boneMotion = anchor.pos().subtract(previous);
-        float depthWeight = (anchor.depth() <= 2 ? 1.02f : anchor.depth() <= 5 ? 0.88f : 0.74f) * anchor.sizeWeight() * anchor.role().sizeWeight;
-        float roleIntensity = intensity * anchor.role().spawnWeight;
-        float sourceDepthWeight = anchor.source() == AnchorSource.CHAIN ? depthWeight * 1.16f : depthWeight;
-        float sourceIntensity = anchor.source() == AnchorSource.CHAIN ? roleIntensity * 1.08f : roleIntensity;
-        float detailQuality = Mth.clamp((quality - 0.25f) / 0.75f, 0.0f, 1.0f);
-        float detailScale = state.performanceBudget.signatureDetailScale();
-
+    private static void spawnSurfacePuff(SourceState state, BoneAnchor site, float modelSize,
+                                         float widthScale, float strength, ParticleRuntime particles) {
         RandomSource random = particles.random;
-        ShadowAuraStyleProfile profile = ShadowAuraStyleProfiles.forStyle(state.style);
-        if (state.style == ShadowAuraStyle.SIGNATURE) {
-            if (random.nextFloat() < (0.50f + quality * 0.12f) * sourceIntensity) {
-                PuffType primaryType = pickBoneAuraPuffType(quality, random, profile);
-                spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, sourceIntensity, sourceDepthWeight, anchor.role(), anchor.normal(), primaryType, quality, particles);
-            }
-        } else {
-            PuffType primaryType = pickBoneAuraPuffType(quality, random, profile);
-            if (random.nextFloat() < (0.50f + quality * 0.12f) * sourceIntensity
-                    * puffTuning(profile, primaryType).spawnWeight()) {
-                spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, sourceIntensity, sourceDepthWeight, anchor.role(), anchor.normal(), primaryType, quality, particles);
-            }
-        }
-        if (random.nextFloat() < anchor.role().wispChance * sourceIntensity * detailQuality
-                * profile.wisp().spawnWeight() * detailScale) {
-            spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, sourceIntensity, sourceDepthWeight, anchor.role(), anchor.normal(), PuffType.WISP, quality, particles);
-        }
-        if (random.nextFloat() < anchor.role().hazeChance * sourceIntensity * (0.72f + quality * 0.28f)
-                * profile.broadHaze().spawnWeight() * detailScale) {
-            spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, sourceIntensity, sourceDepthWeight, anchor.role(), anchor.normal(), PuffType.BROAD_HAZE, quality, particles);
-        }
-        if (anchor.source() == AnchorSource.CHAIN && random.nextFloat() < 0.30f * sourceIntensity * quality
-                * profile.broadHaze().spawnWeight() * detailScale) {
-            spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, sourceIntensity, sourceDepthWeight * 1.10f, anchor.role(), anchor.normal(), PuffType.BROAD_HAZE, quality, particles);
-        }
-
-        float fleckChance = (speed > 0.04 || boneMotion.lengthSqr() > 0.0005) ? 0.055f : 0.018f;
-        float sourceSparkWeight = anchor.source() == AnchorSource.CHAIN ? 0.72f : 1.0f;
-        if (random.nextFloat() < fleckChance * anchor.role().sparkWeight * sourceSparkWeight
-                * sourceIntensity * detailQuality * profile.hotFleck().spawnWeight() * detailScale) {
-            spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, sourceIntensity, sourceDepthWeight, anchor.role(), anchor.normal(), PuffType.HOT_FLECK, quality, particles);
-        }
-    }
-
-    private static void spawnBodyAnchorFillPuffs(EmitterFrame frame,
-                                                 SourceState state,
-                                                 List<BoneAnchor> anchors,
-                                                 float strength,
-                                                 float quality,
-                                                 ParticleRuntime particles) {
-        int eligible = countBodyFillAnchors(anchors);
-        if (eligible <= 0) {
-            return;
-        }
-
-        Vec3 center = frame.center(0.48f);
-        float modelSize = frame.modelSize();
-        ShadowAuraStyleProfile profile = ShadowAuraStyleProfiles.forStyle(state.style);
-        float smallModelBoost = smallModelCoverageBoost(modelSize);
-        float fillScale = profile.emission().bodyAnchorFillScale();
-        float intensity = Mth.clamp(strength * BODY_ANCHOR_FILL_STRENGTH * fillScale
-                * (0.76f + quality * 0.24f) * (1.0f + smallModelBoost * 0.70f), 0.0f, 0.34f);
-        int count = Math.min(
-                eligible,
-                Math.max(2 + Math.round(smallModelBoost * 3.0f),
-                        Math.round(BODY_ANCHOR_FILL_EMITTERS_PER_TICK * (1.0f + smallModelBoost * 1.35f) * intensity * adaptiveEmitterScale(quality)))
-        );
-        count = state.performanceBudget.signatureFillCount(count);
-        if (count <= 0) {
-            return;
-        }
-
-        Vec3 entityMotion = frame.motion;
-        int emitted = 0;
-        int anchorCount = anchors.size();
-        int start = Math.floorMod(state.bodyAnchorFillCursor, Math.max(1, anchorCount));
-        for (int step = 0; step < anchorCount && emitted < count; step++) {
-            int index = (start + step) % anchorCount;
-            BoneAnchor anchor = anchors.get(index);
-            if (!bodyFillAnchorEligible(anchor, center, modelSize)) {
-                continue;
-            }
-
-            Vec3 previous = index < state.lastBoneAnchors.size() ? state.lastBoneAnchors.get(index) : anchor.pos();
-            Vec3 boneMotion = anchor.pos().subtract(previous);
-            float depthWeight = Mth.clamp(0.86f * anchor.sizeWeight() * anchor.role().sizeWeight, 0.58f, 1.04f);
-            spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, intensity, depthWeight, AnchorRole.BODY, Vec3.ZERO, PuffType.BROAD_HAZE, quality, particles);
-            emitted++;
-        }
-
-        state.bodyAnchorFillCursor = advanceCursor(state.bodyAnchorFillCursor, anchorCount, Math.max(emitted, 1));
-    }
-
-    private static int countBodyFillAnchors(List<BoneAnchor> anchors) {
-        int count = 0;
-        for (BoneAnchor anchor : anchors) {
-            if (bodyFillAnchorEligible(anchor, Vec3.ZERO, Float.NaN)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static boolean bodyFillAnchorEligible(BoneAnchor anchor, Vec3 center, float modelSize) {
-        if (anchor.role() != AnchorRole.BODY && anchor.role() != AnchorRole.JOINT) {
-            return false;
-        }
-        if (anchor.source() == AnchorSource.CHAIN) {
-            return false;
-        }
-        if (Float.isNaN(modelSize)) {
-            return true;
-        }
-
-        double relativeY = anchor.pos().y - center.y;
-        float smallModelBoost = smallModelCoverageBoost(modelSize);
-        float lower = Mth.lerp(smallModelBoost, 0.48f, 0.56f);
-        float upper = Mth.lerp(smallModelBoost, 0.34f, 0.50f);
-        return relativeY >= -modelSize * lower && relativeY <= modelSize * upper;
-    }
-
-    private static void spawnSmallModelUpperAnchorFillPuffs(EmitterFrame frame,
-                                                            SourceState state,
-                                                            List<BoneAnchor> anchors,
-                                                            float strength,
-                                                            float quality,
-                                                            ParticleRuntime particles) {
-        float modelSize = frame.modelSize();
-        ShadowAuraStyleProfile profile = ShadowAuraStyleProfiles.forStyle(state.style);
-        float smallModelBoost = smallModelCoverageBoost(modelSize);
-        if (smallModelBoost <= 0.001f) {
-            return;
-        }
-
-        Vec3 center = frame.center(0.50f);
-        int eligible = countSmallModelUpperFillAnchors(anchors, center, modelSize);
-        if (eligible <= 0) {
-            return;
-        }
-
-        float intensity = Mth.clamp(strength * SMALL_MODEL_UPPER_FILL_STRENGTH
-                * profile.emission().upperBodyFillScale()
-                * smallModelBoost * (0.80f + quality * 0.20f), 0.0f, 0.22f);
-        int count = Math.min(eligible, Math.max(2, Math.round(SMALL_MODEL_UPPER_FILL_EMITTERS_PER_TICK * intensity * adaptiveEmitterScale(quality))));
-        count = state.performanceBudget.signatureFillCount(count);
-        if (count <= 0) {
-            return;
-        }
-
-        Vec3 entityMotion = frame.motion;
-        int emitted = 0;
-        int anchorCount = anchors.size();
-        int start = Math.floorMod(state.upperBodyAnchorFillCursor, Math.max(1, anchorCount));
-        for (int step = 0; step < anchorCount && emitted < count; step++) {
-            int index = (start + step) % anchorCount;
-            BoneAnchor anchor = anchors.get(index);
-            if (!smallModelUpperFillAnchorEligible(anchor, center, modelSize)) {
-                continue;
-            }
-
-            Vec3 previous = index < state.lastBoneAnchors.size() ? state.lastBoneAnchors.get(index) : anchor.pos();
-            Vec3 boneMotion = anchor.pos().subtract(previous);
-            float heightWeight = Mth.clamp((float) ((anchor.pos().y - center.y) / Math.max(modelSize, 0.001f)) * 0.22f + 0.86f, 0.78f, 1.04f);
-            float depthWeight = Mth.clamp(heightWeight * anchor.sizeWeight() * 0.88f, 0.58f, 1.04f);
-            PuffType type = particles.random.nextFloat() < 0.72f ? PuffType.BROAD_HAZE : PuffType.CORE_HAZE;
-            spawnBonePuff(state, anchor.pos(), center, boneMotion, entityMotion, modelSize, intensity, depthWeight, AnchorRole.BODY, Vec3.ZERO, type, quality, particles);
-            emitted++;
-        }
-
-        state.upperBodyAnchorFillCursor = advanceCursor(state.upperBodyAnchorFillCursor, anchorCount, Math.max(emitted, 1));
-    }
-
-    private static int countSmallModelUpperFillAnchors(List<BoneAnchor> anchors, Vec3 center, float modelSize) {
-        int count = 0;
-        for (BoneAnchor anchor : anchors) {
-            if (smallModelUpperFillAnchorEligible(anchor, center, modelSize)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static boolean smallModelUpperFillAnchorEligible(BoneAnchor anchor, Vec3 center, float modelSize) {
-        if (anchor.source() == AnchorSource.CHAIN) {
-            return false;
-        }
-        if (anchor.role() != AnchorRole.BODY && anchor.role() != AnchorRole.JOINT && anchor.role() != AnchorRole.SURFACE) {
-            return false;
-        }
-
-        double relativeY = anchor.pos().y - center.y;
-        if (relativeY < -modelSize * 0.08 || relativeY > modelSize * 0.68) {
-            return false;
-        }
-
-        double dx = anchor.pos().x - center.x;
-        double dz = anchor.pos().z - center.z;
-        double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
-        return horizontalDistance <= modelSize * 0.58;
-    }
-
-    private static void spawnBodyVolumeAuraPuffs(EmitterFrame frame,
-                                                 SourceState state,
-                                                 float strength,
-                                                 float quality,
-                                                 ParticleRuntime particles) {
-        float width = Math.max(0.22f, frame.width);
-        float height = Math.max(0.35f, frame.height);
-        float modelSize = Math.max(width, height);
-        ShadowAuraStyleProfile profile = ShadowAuraStyleProfiles.forStyle(state.style);
-        float smallModelBoost = smallModelCoverageBoost(modelSize);
-        Vec3 center = frame.center(Mth.lerp(smallModelBoost, 0.34f, 0.43f));
-        Vec3 previousCenter = state.hasLastBodyCenter
-                ? new Vec3(state.lastBodyX, state.lastBodyY, state.lastBodyZ)
-                : center;
-        Vec3 bodyMotion = center.subtract(previousCenter);
-        state.lastBodyX = center.x;
-        state.lastBodyY = center.y;
-        state.lastBodyZ = center.z;
-        state.hasLastBodyCenter = true;
-
-        float xRadius = Math.max(0.15f, width * Mth.lerp(smallModelBoost, 0.54f, 0.34f));
-        float yRadius = Math.max(0.16f, height * Mth.lerp(smallModelBoost, 0.34f, 0.39f));
-        float zRadius = xRadius;
-        float intensity = Mth.clamp(strength * BODY_VOLUME_FILL_STRENGTH
-                * profile.emission().bodyVolumeFillScale()
-                * (0.72f + quality * 0.28f) * (1.0f - smallModelBoost * 0.18f), 0.0f, 0.36f);
-        int count = Math.max(1, Math.round(BODY_VOLUME_EMITTERS_PER_TICK * (1.0f + smallModelBoost * 0.42f) * intensity * adaptiveEmitterScale(quality)));
-        count = state.performanceBudget.signatureFillCount(count);
-
-        for (int i = 0; i < count; i++) {
-            int sample = state.bodySampleCursor++;
-            Vec3 local = lowerEllipsoidBodySample(sample, xRadius, yRadius, zRadius, smallModelBoost);
-            Vec3 anchor = center.add(local);
-            float depthWeight = 0.76f + 0.12f * halton(sample + 1, 7);
-
-            spawnBonePuff(state, anchor, center, bodyMotion, frame.motion, modelSize, intensity, depthWeight, AnchorRole.BODY, Vec3.ZERO, PuffType.BROAD_HAZE, quality, particles);
-        }
-    }
-
-    private static Vec3 lowerEllipsoidBodySample(int index, float xRadius, float yRadius, float zRadius, float compactness) {
-        float u = halton(index + 1, 2);
-        float v = halton(index + 1, 3);
-        float shell = Mth.lerp(compactness, 0.42f, 0.18f) + Mth.lerp(compactness, 0.58f, 0.62f) * halton(index + 1, 5);
-        float y = (float) Math.pow(v, 1.85f) * 2.0f - 1.0f;
-        float ring = (float) Math.sqrt(Math.max(0.0f, 1.0f - y * y));
-        float angle = u * Mth.TWO_PI;
-        return new Vec3(
-                Math.cos(angle) * ring * shell * xRadius,
-                y * shell * yRadius,
-                Math.sin(angle) * ring * shell * zRadius
-        );
-    }
-
-    private static PuffType pickBoneAuraPuffType(float quality,
-                                                 RandomSource random,
-                                                 ShadowAuraStyleProfile profile) {
+        Vec3 normal = site.normal();
+        // Let widely spaced sites on long wings and tails cover a larger patch of skin.
+        float size = widthScale * Mth.clamp(0.42f + modelSize * 0.14f + site.localScale() * 0.68f, 0.48f, 1.55f);
         float roll = random.nextFloat();
-        float wispWeight = Mth.lerp(quality, 0.10f, 0.26f)
-                * profile.wisp().spawnWeight();
-        float coreWeight = Mth.lerp(quality, 0.72f, 0.62f)
-                * profile.coreHaze().spawnWeight();
-        float broadWeight = Math.max(0.0f,
-                1.0f - Mth.lerp(quality, 0.72f, 0.62f)
-                        - Mth.lerp(quality, 0.10f, 0.26f))
-                * profile.broadHaze().spawnWeight();
-        float total = Math.max(0.0001f, coreWeight + wispWeight + broadWeight);
-        float coreChance = coreWeight / total;
-        float wispChance = wispWeight / total;
-        if (roll < coreChance) {
-            return PuffType.CORE_HAZE;
-        }
-        if (roll < coreChance + wispChance) {
-            return PuffType.WISP;
-        }
-        return PuffType.BROAD_HAZE;
-    }
-
-    private static ShadowAuraStyleProfile.PuffTuning puffTuning(
-            ShadowAuraStyleProfile profile,
-            PuffType type) {
-        return switch (type) {
-            case BROAD_HAZE -> profile.broadHaze();
-            case CORE_HAZE -> profile.coreHaze();
-            case WISP -> profile.wisp();
-            case HOT_FLECK -> profile.hotFleck();
-            case FILAMENT -> ShadowAuraStyleProfiles.SIGNATURE.broadHaze();
-        };
-    }
-
-    private static void spawnBonePuff(SourceState source,
-                                      Vec3 anchorPos,
-                                      Vec3 center,
-                                      Vec3 boneMotion,
-                                      Vec3 entityMotion,
-                                      float modelSize,
-                                      float intensity,
-                                      float depthWeight,
-                                      AnchorRole role,
-                                      Vec3 anchorNormal,
-                                      PuffType type,
-                                      float quality,
-                                      ParticleRuntime particles) {
-        spawnBonePuff(
-                source,
-                anchorPos,
-                center,
-                boneMotion,
-                entityMotion,
-                modelSize,
-                intensity,
-                depthWeight,
-                role,
-                anchorNormal,
-                type,
-                quality,
-                particles,
-                -1);
-    }
-
-    private static void spawnBonePuff(SourceState source,
-                                      Vec3 anchorPos,
-                                      Vec3 center,
-                                      Vec3 boneMotion,
-                                      Vec3 entityMotion,
-                                      float modelSize,
-                                      float intensity,
-                                      float depthWeight,
-                                      AnchorRole role,
-                                      Vec3 anchorNormal,
-                                      PuffType type,
-                                      float quality,
-                                      ParticleRuntime particles,
-                                      int lifetimeOverrideTicks) {
-        RandomSource random = particles.random;
-        ShadowAuraStyleProfile styleProfile = ShadowAuraStyleProfiles.forStyle(
-                source.style);
-        ShadowAuraStyleProfile.PuffTuning styleTuning = puffTuning(
-                styleProfile,
-                type);
-        Vec3 outward = anchorPos.subtract(center);
-        if (outward.lengthSqr() > 0.0001) {
-            outward = outward.normalize();
-        } else {
-            outward = randomUnitVector(random);
-        }
-        if (role == AnchorRole.SURFACE && anchorNormal != null && anchorNormal.lengthSqr() > 0.0001) {
-            outward = anchorNormal.normalize();
-        }
-
-        Vec3 jitter = randomUnitVector(random);
-        float radiusScale = switch (type) {
-            case BROAD_HAZE -> 0.18f;
-            case CORE_HAZE -> 0.15f;
-            case WISP -> 0.20f;
-            case HOT_FLECK -> 0.22f;
-            case FILAMENT -> 0.18f;
-        };
-        float auraRadius = Mth.clamp(modelSize * radiusScale, 0.10f, 0.42f) * depthWeight;
-        float smallModelBoost = smallModelCoverageBoost(modelSize);
-        float compactPlacement = 1.0f - smallModelBoost * (role == AnchorRole.SURFACE ? 0.18f : 0.38f);
-        float outwardPush = role == AnchorRole.SURFACE
-                ? auraRadius * (0.08f + random.nextFloat() * 0.20f)
-                : auraRadius * (0.30f + random.nextFloat() * 0.64f);
-        float jitterPush = role == AnchorRole.SURFACE
-                ? auraRadius * (0.05f + random.nextFloat() * 0.14f)
-                : auraRadius * (0.14f + random.nextFloat() * 0.30f);
-        outwardPush *= compactPlacement;
-        jitterPush *= 1.0f - smallModelBoost * 0.26f;
-        float horizontalSpread = anchorRoleHorizontalSpreadScale(role);
-        float verticalPlacement = anchorRoleVerticalPlacementScale(role);
-
-        double px = anchorPos.x + (outward.x * outwardPush + jitter.x * jitterPush) * horizontalSpread;
-        double py = anchorPos.y + (outward.y * outwardPush + jitter.y * jitterPush) * verticalPlacement
-                + random.nextFloat() * auraRadius * 0.10f * verticalPlacement;
-        double pz = anchorPos.z + (outward.z * outwardPush + jitter.z * jitterPush) * horizontalSpread;
-
-        float baseSize;
+        PuffType type;
         int lifetime;
         float density;
-        switch (type) {
-            case BROAD_HAZE -> {
-                ShadowAuraStyleProfile.BurstTuning burst = styleProfile.burst();
-                if (source.style == ShadowAuraStyle.XD_FAITHFUL && burst.enabled()) {
-                    baseSize = Mth.clamp(
-                            modelSize * Mth.lerp(
-                                    random.nextFloat(),
-                                    burst.sizeMinModelScale(),
-                                    burst.sizeMaxModelScale()) * depthWeight,
-                            0.12f,
-                            1.16f);
-                    int lifeRange = Math.max(
-                            0,
-                            burst.lifetimeMaxTicks() - burst.lifetimeMinTicks());
-                    lifetime = burst.lifetimeMinTicks()
-                            + (lifeRange == 0 ? 0 : random.nextInt(lifeRange + 1));
-                } else {
-                    baseSize = Mth.clamp(modelSize * (0.52f + random.nextFloat() * 0.24f) * depthWeight, 0.42f, 1.16f);
-                    lifetime = 52 + random.nextInt(30);
-                }
-                density = (0.20f + random.nextFloat() * 0.20f) * intensity;
-            }
-            case CORE_HAZE -> {
-                ShadowAuraStyleProfile.BurstTuning burst = styleProfile.burst();
-                if (source.style == ShadowAuraStyle.XD_FAITHFUL && burst.enabled()) {
-                    baseSize = Mth.clamp(
-                            modelSize * Mth.lerp(
-                                    random.nextFloat(),
-                                    burst.sizeMinModelScale() * 0.68f,
-                                    burst.sizeMaxModelScale() * 0.82f) * depthWeight,
-                            0.10f,
-                            0.82f);
-                    int lifeRange = Math.max(
-                            0,
-                            burst.lifetimeMaxTicks() - burst.lifetimeMinTicks());
-                    lifetime = burst.lifetimeMinTicks()
-                            + (lifeRange == 0 ? 0 : random.nextInt(lifeRange + 1));
-                } else {
-                    baseSize = Mth.clamp(modelSize * (0.32f + random.nextFloat() * 0.18f) * depthWeight, 0.26f, 0.82f);
-                    lifetime = 42 + random.nextInt(26);
-                }
-                density = (0.34f + random.nextFloat() * 0.28f) * intensity;
-            }
-            case WISP -> {
-                baseSize = Mth.clamp(modelSize * (0.16f + random.nextFloat() * 0.13f) * depthWeight, 0.14f, 0.46f);
-                lifetime = 34 + random.nextInt(22);
-                density = (0.40f + random.nextFloat() * 0.32f) * intensity;
-            }
-            case HOT_FLECK -> {
-                baseSize = Mth.clamp(modelSize * (0.052f + random.nextFloat() * 0.050f) * depthWeight, 0.045f, 0.18f);
-                lifetime = 18 + random.nextInt(18);
-                density = (0.34f + random.nextFloat() * 0.28f) * intensity;
-            }
-            case FILAMENT -> {
-                ShadowAuraStyleProfile.BurstTuning burst = styleProfile.burst();
-                ShadowAuraStyleProfile.FilamentTuning filament = styleProfile.filament();
-                float coreWorldHalfWidth = modelSize
-                        * filament.coreWidthModelScale();
-                float haloWorldHalfWidth = coreWorldHalfWidth
-                        * filament.haloWidthScale();
-                float coreBillboardHalfSize = coreWorldHalfWidth
-                        / XD_FILAMENT_CORE_UV_HALF_WIDTH;
-                float haloBillboardHalfSize = haloWorldHalfWidth
-                        / XD_FILAMENT_HALO_UV_HALF_WIDTH;
-                baseSize = Mth.clamp(
-                        Math.max(coreBillboardHalfSize, haloBillboardHalfSize),
-                        0.10f,
-                        Math.max(0.32f, modelSize * 0.75f));
-                int lifeRange = Math.max(0,
-                        burst.lifetimeMaxTicks() - burst.lifetimeMinTicks());
-                lifetime = Math.max(8, burst.lifetimeMinTicks()
-                        + (lifeRange == 0 ? 0 : random.nextInt(lifeRange + 1)));
-                lifetime = Math.max(
-                        8,
-                        Math.round(lifetime * filament.lifetimeScale()));
-                density = intensity * filament.intensityScale();
-            }
-            default -> throw new IllegalStateException("Unhandled aura puff type");
+        if (roll < 0.50f) {
+            type = PuffType.BROAD_HAZE;
+            lifetime = 42 + random.nextInt(17);
+            density = 0.60f;
+        } else if (roll < 0.85f) {
+            type = PuffType.CORE_HAZE;
+            size *= 0.76f;
+            lifetime = 34 + random.nextInt(17);
+            density = 0.82f;
+        } else if (roll < 0.98f) {
+            type = PuffType.WISP;
+            size *= 0.50f;
+            lifetime = 28 + random.nextInt(14);
+            density = 0.88f;
+        } else {
+            type = PuffType.HOT_FLECK;
+            size *= 0.16f;
+            lifetime = 18 + random.nextInt(12);
+            density = 0.67f;
         }
-
-        float roleSizeScale = type == PuffType.FILAMENT
-                ? 1.0f
-                : anchorRolePuffSizeScale(role);
-        float roleDensityScale = anchorRolePuffDensityScale(role);
-        float roleVerticalScale = anchorRoleVerticalDriftScale(role);
-        float highAltitude = Mth.clamp((float) ((anchorPos.y - center.y) / Math.max(modelSize, 0.001f)), 0.0f, 1.6f);
-        float highAltitudeDamping = 1.0f - smoothstep(0.34f, 1.16f, highAltitude) * 0.42f;
-        float smallModelSizeBoost = type == PuffType.FILAMENT
-                ? 1.0f
-                : 1.0f + smallModelBoost
-                * (type == PuffType.BROAD_HAZE ? 0.18f : 0.10f);
-        baseSize *= roleSizeScale * smallModelSizeBoost;
-        baseSize *= styleTuning.sizeScale();
-        lifetime = Math.max(8, Math.round((lifetime + anchorRoleLifetimeBonus(role, type))
-                * (0.78f + highAltitudeDamping * 0.22f)
-                * (1.0f + (1.0f - quality) * 0.18f)));
-        lifetime = Math.max(8, Math.round(lifetime * styleTuning.lifetimeScale()));
-        if (lifetimeOverrideTicks > 0) {
-            lifetime = Math.max(8, lifetimeOverrideTicks);
+        size *= 0.90f + random.nextFloat() * 0.22f;
+        Vec3 origin = site.pos().add(normal.scale(Math.min(0.045, size * 0.045)));
+        double drift = 0.011 + random.nextDouble() * 0.014;
+        Puff puff = new Puff(origin.x, origin.y, origin.z,
+                normal.x * drift + (random.nextFloat() - 0.5) * 0.014,
+                normal.y * drift + 0.006 + random.nextFloat() * 0.015,
+                normal.z * drift + (random.nextFloat() - 0.5) * 0.014,
+                size, lifetime, density * strength * (0.85f + random.nextFloat() * 0.30f),
+                type, modelSize, state, random);
+        puff.anchorKey = site.key();
+        puff.lastAnchorPosition = site.pos();
+        puff.signatureFrame = state.signatureFrame;
+        // Use 44% of births for broad smoke and 6% for wisps along the flight path.
+        boolean suppliesWake = roll < 0.44f || (type == PuffType.WISP && roll < 0.91f);
+        if (puff.signatureFrame != null && suppliesWake) {
+            puff.wakeReleaseAge = Mth.ceil(lifetime * SIGNATURE_WAKE_RELEASE);
         }
-        density *= roleDensityScale * highAltitudeDamping * (0.84f + quality * 0.16f) * (1.0f + smallModelBoost * 0.18f);
-        density *= styleTuning.densityScale();
-
-        float follow = type == PuffType.FILAMENT
-                ? styleProfile.filament().driftFollow()
-                : 1.0f;
-        Vec3 animationDrift = boneMotion.scale(0.34 * follow)
-                .add(entityMotion.scale(0.055 * follow));
-        double driftScale = type == PuffType.HOT_FLECK
-                ? 0.018
-                : type == PuffType.FILAMENT ? 0.016 : 0.030;
-        driftScale *= styleTuning.driftScale();
-        animationDrift = animationDrift.scale(styleTuning.driftScale());
-        double xd = outward.x * driftScale + animationDrift.x + (random.nextFloat() - 0.5) * 0.020 * styleTuning.driftScale();
-        double yd = (0.005 + random.nextFloat() * 0.014 + outward.y * 0.007) * roleVerticalScale * highAltitudeDamping
-                + animationDrift.y * 0.45;
-        double zd = outward.z * driftScale + animationDrift.z + (random.nextFloat() - 0.5) * 0.020 * styleTuning.driftScale();
-
-        particles.add(new Puff(
-                px, py, pz,
-                xd, yd, zd,
-                baseSize, lifetime,
-                density, type,
-                modelSize,
-                source,
-                random
-        ));
+        particles.add(puff);
     }
 
-    private static float anchorRolePuffSizeScale(AnchorRole role) {
-        if (role == null) {
-            return 1.0f;
+    private static void followSignatureSurface(Puff puff, long tick) {
+        float life = (float) puff.age / puff.lifetime;
+        Vec3 next = null;
+        if (life < SIGNATURE_SURFACE_RELEASE && tick - puff.source.surfacePoseTick <= 5
+                && puff.source.style == puff.style && puff.signatureFrame == puff.source.signatureFrame) {
+            BoneAnchor anchor = puff.source.signatureAnchors.get(puff.anchorKey);
+            next = anchor != null ? anchor.pos() : puff.source.signatureLayout.followPosition(puff.anchorKey);
         }
-        return switch (role) {
-            case TIP -> 1.16f;
-            case APPENDAGE -> 1.10f;
-            case SURFACE -> 0.72f;
-            case JOINT -> 0.92f;
-            case BODY -> 1.0f;
-        };
-    }
-
-    private static float anchorRolePuffDensityScale(AnchorRole role) {
-        if (role == null) {
-            return 1.0f;
+        double maxStep = Math.max(0.8, puff.sourceModelSize * 0.85);
+        if (next == null || next.distanceToSqr(puff.lastAnchorPosition) > maxStep * maxStep) {
+            puff.anchorKey = null;
+            return;
         }
-        return switch (role) {
-            case TIP, APPENDAGE -> 1.06f;
-            case SURFACE -> 0.92f;
-            case JOINT -> 0.92f;
-            case BODY -> 0.82f;
-        };
-    }
-
-    private static float anchorRoleHorizontalSpreadScale(AnchorRole role) {
-        if (role == null) {
-            return 1.0f;
-        }
-        return switch (role) {
-            case TIP -> 1.22f;
-            case APPENDAGE -> 1.16f;
-            case SURFACE -> 0.58f;
-            case JOINT -> 0.92f;
-            case BODY -> 1.04f;
-        };
-    }
-
-    private static float anchorRoleVerticalPlacementScale(AnchorRole role) {
-        if (role == null) {
-            return 1.0f;
-        }
-        return switch (role) {
-            case TIP -> 0.58f;
-            case APPENDAGE -> 0.62f;
-            case SURFACE -> 0.30f;
-            case JOINT -> 0.66f;
-            case BODY -> 0.52f;
-        };
-    }
-
-    private static float anchorRoleVerticalDriftScale(AnchorRole role) {
-        if (role == null) {
-            return 1.0f;
-        }
-        return switch (role) {
-            case SURFACE -> 0.24f;
-            case TIP -> 0.48f;
-            case APPENDAGE -> 0.54f;
-            case JOINT -> 0.62f;
-            case BODY -> 0.38f;
-        };
-    }
-
-    private static int anchorRoleLifetimeBonus(AnchorRole role, PuffType type) {
-        if (role == null
-                || type == PuffType.HOT_FLECK
-                || type == PuffType.FILAMENT) {
-            return 0;
-        }
-        return switch (role) {
-            case TIP -> 10;
-            case APPENDAGE -> 8;
-            case SURFACE -> type == PuffType.BROAD_HAZE ? 2 : 0;
-            case BODY, JOINT -> 0;
-        };
+        // New smoke follows the animated part. Older smoke gradually separates into a trail.
+        float follow = 1.0f - smoothstep(0.18f, SIGNATURE_SURFACE_RELEASE, life);
+        puff.x += (next.x - puff.lastAnchorPosition.x) * follow;
+        puff.y += (next.y - puff.lastAnchorPosition.y) * follow;
+        puff.z += (next.z - puff.lastAnchorPosition.z) * follow;
+        puff.lastAnchorPosition = next;
     }
 
     private static Vec3 randomUnitVector(RandomSource random) {
@@ -2843,107 +2260,6 @@ public final class ShadowPokemonAuraSystem {
         return x - (float) Math.floor(x);
     }
 
-    private static PuffType pickType(double speed,
-                                     ShadowAuraStyleProfile profile,
-                                     RandomSource random) {
-        float roll = random.nextFloat();
-        float fleckChance = speed > 0.05 ? 0.16f : 0.09f;
-        float fleckWeight = fleckChance * profile.hotFleck().spawnWeight();
-        float wispWeight = Math.max(0.0f, 0.42f - fleckChance)
-                * profile.wisp().spawnWeight();
-        float coreWeight = 0.58f * profile.coreHaze().spawnWeight();
-        float total = Math.max(0.0001f, fleckWeight + wispWeight + coreWeight);
-        if (roll < fleckWeight / total) return PuffType.HOT_FLECK;
-        if (roll < (fleckWeight + wispWeight) / total) return PuffType.WISP;
-        return PuffType.CORE_HAZE;
-    }
-
-    private static void spawnPuff(SourceState source,
-                                  double x, double y, double z,
-                                  float radius, float height,
-                                  float fade, float corruption,
-                                  Vec3 motionDir, double speed,
-                                  float animationPhase,
-                                  PuffType type) {
-        float yFrac = 0.06f + RANDOM.nextFloat() * 0.88f;
-        float ellipsoidProfile = (float) Math.sin(yFrac * Math.PI);
-        float shellRadius = radius * (0.42f + 0.62f * ellipsoidProfile);
-
-        float angle = RANDOM.nextFloat() * Mth.TWO_PI
-                + animationPhase * (type == PuffType.HOT_FLECK ? 0.85f : 0.35f)
-                + yFrac * 2.4f;
-        float pulse = (float) Math.sin(animationPhase * 2.1f + yFrac * 5.7f);
-        float radialJitter = 0.78f + RANDOM.nextFloat() * 0.58f + pulse * 0.07f;
-
-        double ox = Math.cos(angle) * shellRadius * radialJitter;
-        double oz = Math.sin(angle) * shellRadius * radialJitter;
-
-        double wake = speed > 0.0001 ? RANDOM.nextFloat() * radius * Math.min(1.35, speed * 3.5) : 0.0;
-        double px = x + ox - motionDir.x * wake;
-        double py = y + height * yFrac + (RANDOM.nextFloat() - 0.5) * height * 0.09;
-        double pz = z + oz - motionDir.z * wake;
-
-        float scale = Math.max(0.45f, Math.min(radius, height) * 0.75f);
-        float baseSize;
-        int lifetime;
-        float density;
-        switch (type) {
-            case CORE_HAZE -> {
-                baseSize = (0.28f + RANDOM.nextFloat() * 0.24f) * scale;
-                lifetime = 34 + RANDOM.nextInt(22);
-                density = (0.34f + RANDOM.nextFloat() * 0.34f) * fade * (0.55f + corruption * 0.65f);
-            }
-            case WISP -> {
-                baseSize = (0.16f + RANDOM.nextFloat() * 0.18f) * scale;
-                lifetime = 28 + RANDOM.nextInt(18);
-                density = (0.42f + RANDOM.nextFloat() * 0.40f) * fade * (0.50f + corruption * 0.70f);
-            }
-            case HOT_FLECK -> {
-                baseSize = (0.055f + RANDOM.nextFloat() * 0.060f) * scale;
-                lifetime = 24 + RANDOM.nextInt(22);
-                density = (0.55f + RANDOM.nextFloat() * 0.45f) * fade * (0.50f + corruption * 0.75f);
-            }
-            default -> throw new IllegalStateException("Unhandled aura puff type");
-        }
-
-        ShadowAuraStyleProfile.PuffTuning tuning = puffTuning(
-                ShadowAuraStyleProfiles.forStyle(source.style),
-                type);
-        baseSize *= tuning.sizeScale();
-        lifetime = Math.max(8, Math.round(lifetime * tuning.lifetimeScale()));
-        density *= tuning.densityScale();
-
-        Vec3 outward = new Vec3(ox, 0.0, oz);
-        if (outward.lengthSqr() > 0.0001) {
-            outward = outward.normalize();
-        }
-
-        double driftScale = (type == PuffType.HOT_FLECK ? 0.010 : 0.018)
-                * tuning.driftScale();
-        double xd = outward.x * driftScale - motionDir.x * speed * 0.035 + (RANDOM.nextFloat() - 0.5) * 0.018;
-        double yd = 0.004 + RANDOM.nextFloat() * 0.014 + (type == PuffType.CORE_HAZE ? 0.004 : 0.0);
-        double zd = outward.z * driftScale - motionDir.z * speed * 0.035 + (RANDOM.nextFloat() - 0.5) * 0.018;
-
-        addPuff(new Puff(
-                px, py, pz,
-                xd, yd, zd,
-                baseSize, lifetime,
-                density, type,
-                Math.max(radius, height),
-                source
-        ));
-    }
-
-    private static void addPuff(Puff puff) {
-        synchronized (ACTIVE) {
-            int puffLimit = adaptivePuffLimit();
-            if (ACTIVE.size() >= puffLimit) {
-                int overflow = ACTIVE.size() - puffLimit + 1;
-                ACTIVE.subList(0, Math.min(overflow, ACTIVE.size())).clear();
-            }
-            ACTIVE.add(puff);
-        }
-    }
 
     private static int adaptivePuffLimit() {
         return AuraPerformanceBudget.adaptivePuffLimit(SOURCES.size());
@@ -2994,6 +2310,10 @@ public final class ShadowPokemonAuraSystem {
                 Puff puff = it.next();
                 if (classicOnly && puff.style != ShadowAuraStyle.COLOSSEUM
                         && puff.style != ShadowAuraStyle.XD_FAITHFUL) continue;
+                if (puff.age == puff.wakeReleaseAge && puff.signatureFrame == puff.source.signatureFrame
+                        && puff.signatureFrame.isTraveling()) {
+                    puff.releaseIntoWake(particles.wakeScratch);
+                }
                 puff.xo = puff.x;
                 puff.yo = puff.y;
                 puff.zo = puff.z;
@@ -3001,7 +2321,9 @@ public final class ShadowPokemonAuraSystem {
                 puff.ydo = puff.yd;
                 puff.zdo = puff.zd;
 
-                if (puff.anchorKey != null) {
+                if (puff.anchorKey != null && puff.style == ShadowAuraStyle.SIGNATURE) {
+                    followSignatureSurface(puff, particles.tickSerial);
+                } else if (puff.anchorKey != null) {
                     BoneAnchor anchor = puff.source.style == puff.style
                             && particles.tickSerial - puff.source.classicAnchorTick <= 6
                             && puff.age < puff.lifetime * (puff.colosseumPlume ? 0.34f : 0.55f)
@@ -3040,9 +2362,10 @@ public final class ShadowPokemonAuraSystem {
                                 puff.zd = puff.zd * 0.97 + puff.plumeDirection.z * bend;
                             }
                         } else {
-                            puff.xd *= 0.89;
+                            double horizontalRetention = puff.style == ShadowAuraStyle.SIGNATURE ? 0.93 : 0.89;
+                            puff.xd *= horizontalRetention;
                             puff.yd *= 0.982;
-                            puff.zd *= 0.89;
+                            puff.zd *= horizontalRetention;
                         }
                     }
                     case CORE_HAZE -> {
@@ -3154,6 +2477,10 @@ public final class ShadowPokemonAuraSystem {
                         DefaultVertexFormat.PARTICLE);
         PoseStack stack = new PoseStack();
         Quaternionf camOrientation = camera.rotation();
+        Vector3f cameraRight = camOrientation.transform(new Vector3f(1, 0, 0));
+        Vector3f cameraUp = camOrientation.transform(new Vector3f(0, 1, 0));
+        Vector3d worldPosition = new Vector3d();
+        Vector3d velocity = new Vector3d();
         Matrix4f puffClipTransform = new Matrix4f();
         Vector4f clipCorner0 = new Vector4f();
         Vector4f clipCorner1 = new Vector4f();
@@ -3179,9 +2506,10 @@ public final class ShadowPokemonAuraSystem {
                 float size = sampleSize(puff, partialTicks);
                 if (size <= 0.001f) continue;
 
-                double rx = Mth.lerp(partialTicks, puff.xo, puff.x) - camPos.x;
-                double ry = Mth.lerp(partialTicks, puff.yo, puff.y) - camPos.y;
-                double rz = Mth.lerp(partialTicks, puff.zo, puff.z) - camPos.z;
+                puff.renderPosition(partialTicks, worldPosition);
+                double rx = worldPosition.x - camPos.x;
+                double ry = worldPosition.y - camPos.y;
+                double rz = worldPosition.z - camPos.z;
                 double distance = Math.sqrt(rx * rx + ry * ry + rz * rz);
                 float renderQuality = puffRenderQuality(distance);
                 if (shouldSkipPuffRender(puff, renderQuality)) {
@@ -3194,10 +2522,8 @@ public final class ShadowPokemonAuraSystem {
                 stack.translate(rx, ry, rz);
                 stack.mulPose(camOrientation);
 
-                double ivx = Mth.lerp(partialTicks, puff.xdo, puff.xd);
-                double ivy = Mth.lerp(partialTicks, puff.ydo, puff.yd);
-                double ivz = Mth.lerp(partialTicks, puff.zdo, puff.zd);
-                double speed = Math.sqrt(ivx * ivx + ivy * ivy + ivz * ivz);
+                puff.renderVelocity(partialTicks, velocity);
+                double speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
                 float halfWidth = size;
                 float halfHeight = size;
 
@@ -3209,13 +2535,8 @@ public final class ShadowPokemonAuraSystem {
 
                     float velAngle = puff.rotation;
                     if (speed > 0.0005) {
-                        Vec3 vel = new Vec3(ivx, ivy, ivz);
-                        org.joml.Vector3f right = camOrientation.transform(new org.joml.Vector3f(1, 0, 0));
-                        org.joml.Vector3f up = camOrientation.transform(new org.joml.Vector3f(0, 1, 0));
-                        Vec3 camRight = new Vec3(right.x, right.y, right.z);
-                        Vec3 camUp = new Vec3(up.x, up.y, up.z);
-                        float dotR = (float) vel.dot(camRight);
-                        float dotU = (float) vel.dot(camUp);
+                        float dotR = (float) (velocity.x * cameraRight.x + velocity.y * cameraRight.y + velocity.z * cameraRight.z);
+                        float dotU = (float) (velocity.x * cameraUp.x + velocity.y * cameraUp.y + velocity.z * cameraUp.z);
                         velAngle = (float) Math.atan2(dotU, dotR);
                     }
                     float speedBlend = (float) Math.min(speed / 0.005, 1.0);
@@ -3281,13 +2602,7 @@ public final class ShadowPokemonAuraSystem {
                 if (puff.style == ShadowAuraStyle.COLOSSEUM && puff.type != PuffType.HOT_FLECK) {
                     sparkWeight = ColosseumSmokeAppearance.ageChannel(puff.age + partialTicks, puff.lifetime);
                 }
-                float wispWeight = switch (puff.type) {
-                    case BROAD_HAZE -> 0.05f;
-                    case CORE_HAZE -> 0.25f;
-                    case WISP -> 1.00f;
-                    case HOT_FLECK -> 0.25f;
-                    case FILAMENT -> 1.00f;
-                };
+                float wispWeight = sampleWispWeight(puff, partialTicks);
 
                 broadWeight *= renderTuning.broadChannelScale();
                 sparkWeight = puffGreenChannel(puff.style, sparkWeight, renderTuning.heatChannelScale());
@@ -3475,6 +2790,15 @@ public final class ShadowPokemonAuraSystem {
         return new PuffStretch(axis, 1.0f / axis);
     }
 
+    private static float sampleWispWeight(Puff puff, float partialTicks) {
+        return switch (puff.type) {
+            // Let the violet detail emerge as the haze drifts into the wake.
+            case BROAD_HAZE -> puff.inWake() ? 0.05f + 0.80f * puff.wakeBlend(partialTicks) : 0.05f;
+            case CORE_HAZE, HOT_FLECK -> 0.25f;
+            case WISP, FILAMENT -> 1.00f;
+        };
+    }
+
     private static float sampleSize(Puff puff, float partialTicks) {
         float t = Mth.clamp((puff.age + partialTicks) / (float) puff.lifetime, 0.0f, 1.0f);
         if (puff.classic && puff.style == ShadowAuraStyle.XD_FAITHFUL) {
@@ -3540,6 +2864,10 @@ public final class ShadowPokemonAuraSystem {
                     yield ColosseumSmokeAppearance.opacity(puff.age + partialTicks, puff.lifetime) * puff.baseDensity;
                 }
                 float fadeIn = smoothstep(0.0f, 0.18f, t);
+                if (puff.inWake()) {
+                    float density = puff.baseDensity * (1.0f + 0.25f * puff.wakeBlend(partialTicks));
+                    yield fadeIn * (1.0f - smoothstep(0.68f, 1.0f, t)) * density;
+                }
                 float fadeOut = 1.0f - smoothstep(0.60f, 0.98f, t);
                 yield fadeIn * fadeOut * puff.baseDensity;
             }
@@ -3620,6 +2948,31 @@ public final class ShadowPokemonAuraSystem {
     }
 
     private static final class SourceState {
+        AuraEmitterDebug.Births debugBirths;
+        final SignatureSurfaceLayout signatureLayout = new SignatureSurfaceLayout();
+        SignatureAuraFrame signatureFrame;
+
+        void startSignatureFrame(Vec3 base, long gameTime) {
+            signatureFrame = new SignatureAuraFrame(base, gameTime);
+            signatureAnchors.clear();
+            signatureLayout.clearFollowPose();
+        }
+
+        void updateSignatureLocation(Vec3 base, long gameTime) {
+            if (signatureFrame == null || !signatureFrame.canContinue(base, gameTime)) {
+                startSignatureFrame(base, gameTime);
+            } else {
+                signatureFrame.move(base, gameTime);
+            }
+        }
+
+        void updateSignaturePose(Vec3 base, Vec3 camera, Matrix4f root, long gameTime) {
+            updateSignatureLocation(base, gameTime);
+            // Shell puffs were born before a drawn model supplied its pivot.
+            if (!signatureFrame.isPosed() && !signatureAnchors.isEmpty()) startSignatureFrame(base, gameTime);
+            signatureFrame.pose(camera, root);
+        }
+
         ShadowAuraStyle style = ShadowAuraStyle.DEFAULT;
         boolean modeTint;
         ColosseumAuraVolume colosseumVolume;
@@ -3638,47 +2991,31 @@ public final class ShadowPokemonAuraSystem {
         final List<XdAuraSurfaceSampler.Cube> xdSurfaceCubes = new ArrayList<>();
         final Map<Object, ClassicRegion> classicRegions = new LinkedHashMap<>();
         int lastClassicFrameTick = Integer.MIN_VALUE;
-        double x;
-        double y;
-        double z;
         double pixelCenterX;
         double pixelCenterY;
         double pixelCenterZ;
         double pixelModelSize = 1.0;
-        double lastBodyX;
-        double lastBodyY;
-        double lastBodyZ;
         long lastEmitTick = Long.MIN_VALUE;
         long lastBoneEmitTick = Long.MIN_VALUE;
         long lastBoneTick = Long.MIN_VALUE;
         long lastSeenTick = Long.MIN_VALUE;
-        int bodySampleCursor;
-        int bodyAnchorFillCursor;
-        int upperBodyAnchorFillCursor;
-        int boneEmitterCursor;
-        int appendageEmitterCursor;
         int surfaceEmitterCursor;
-        int tipEmitterCursor;
-        int xdBurstEmitterCursor;
-        long nextXdBurstTick = Long.MIN_VALUE;
+        double surfaceBirthCarry;
+        long surfacePoseTick;
+        final Map<Object, BoneAnchor> signatureAnchors = new HashMap<>();
         float fade = 1.0f;
         float corruption = 1.0f;
         float quality = 1.0f;
         AuraPerformanceBudget performanceBudget = AuraPerformanceBudget.QUALITY;
         float stableWorldPixelLod = maximumWorldPixelLod(
                 ShadowPokemonAuraFBO.maximumWorldPixelSize());
-        boolean hasLastBodyCenter;
         final float seed;
-        final List<Vec3> lastBoneAnchors = new ArrayList<>();
 
         SourceState(double x, double y, double z) {
             this(x, y, z, RANDOM);
         }
 
         SourceState(double x, double y, double z, RandomSource random) {
-            this.x = x;
-            this.y = y;
-            this.z = z;
             this.pixelCenterX = x;
             this.pixelCenterY = y;
             this.pixelCenterZ = z;
@@ -3721,6 +3058,7 @@ public final class ShadowPokemonAuraSystem {
         final List<Puff> active;
         final IntSupplier limit;
         final List<WispParticle> wisps = new ArrayList<>();
+        final Vector3d wakeScratch = new Vector3d();
         long tickSerial;
 
         ParticleRuntime(RandomSource random, List<Puff> active, IntSupplier limit) {
@@ -3869,6 +3207,9 @@ public final class ShadowPokemonAuraSystem {
                                 float rootPadding, Object regionKey) {}
 
     private static final class RenderedAnchorCapture {
+        final SignatureSurfaceLayout.Pose signaturePose = new SignatureSurfaceLayout.Pose();
+        final Matrix4f signatureToLocal;
+        final Matrix4f signaturePartPose;
         final PokemonEntity entity;
         final SourceState state;
         final Vec3 poseToWorldOffset;
@@ -3900,6 +3241,8 @@ public final class ShadowPokemonAuraSystem {
             this.entity = entity;
             this.state = state;
             this.poseToWorldOffset = poseToWorldOffset;
+            this.signatureToLocal = state.signatureFrame == null ? null : state.signatureFrame.captureToLocal(poseToWorldOffset);
+            this.signaturePartPose = signatureToLocal == null ? null : new Matrix4f();
             this.sourceWorld = sourceWorld;
             this.strength = strength;
             this.partialTicks = partialTicks;
@@ -3913,6 +3256,7 @@ public final class ShadowPokemonAuraSystem {
     }
 
     private static final class PreviewAnchorCapture {
+        final SignatureSurfaceLayout.Pose signaturePose = new SignatureSurfaceLayout.Pose();
         final int generation;
         final Matrix4f inverseRootPose;
         final Matrix4f rawToAura;
@@ -3954,6 +3298,8 @@ public final class ShadowPokemonAuraSystem {
     private record RenderedPartNode(ModelPart part, Vec3 geometryWorld, boolean chainable) {}
 
     private static final class Puff {
+        SignatureAuraFrame signatureFrame;
+        int wakeReleaseAge = -1;
         double x, y, z;
         double xo, yo, zo;
         double xd, yd, zd;
@@ -3982,6 +3328,40 @@ public final class ShadowPokemonAuraSystem {
         Object classicRegionKey;
         float classicRootPadding;
         Vec3 lastAnchorPosition;
+
+        boolean inWake() {
+            return wakeReleaseAge >= 0 && signatureFrame == null;
+        }
+
+        float wakeBlend(float partialTicks) {
+            // age has advanced by the time we draw the release tick's interpolation interval.
+            return smoothstep(0.0f, 5.0f, age - 1 - wakeReleaseAge + partialTicks);
+        }
+
+        void releaseIntoWake(Vector3d scratch) {
+            // Rebase before the tick saves the interpolation endpoints, so both are in world space.
+            signatureFrame.toWorldPosition(scratch.set(x, y, z));
+            x = scratch.x;
+            y = scratch.y;
+            z = scratch.z;
+            signatureFrame.toWorldDirection(scratch.set(xd, yd, zd));
+            xd = scratch.x;
+            yd = scratch.y;
+            zd = scratch.z;
+            signatureFrame = null;
+            anchorKey = null;
+            lastAnchorPosition = null;
+        }
+
+        void renderPosition(float partial, Vector3d position) {
+            position.set(Mth.lerp(partial, xo, x), Mth.lerp(partial, yo, y), Mth.lerp(partial, zo, z));
+            if (signatureFrame != null) signatureFrame.toWorldPosition(position);
+        }
+
+        void renderVelocity(float partial, Vector3d velocity) {
+            velocity.set(Mth.lerp(partial, xdo, xd), Mth.lerp(partial, ydo, yd), Mth.lerp(partial, zdo, zd));
+            if (signatureFrame != null) signatureFrame.toWorldDirection(velocity);
+        }
 
         Puff(double x, double y, double z,
              double xd, double yd, double zd,

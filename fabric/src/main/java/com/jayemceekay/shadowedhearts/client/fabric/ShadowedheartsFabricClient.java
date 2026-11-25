@@ -171,7 +171,7 @@ public final class ShadowedheartsFabricClient implements ClientModInitializer {
         });
 
         ClientEntityEvents.ENTITY_UNLOAD.register((entity, clientLevel) -> {
-            ShadowAuraEmitters.onPokemonDespawn(entity.getId());
+            ShadowAuraEmitters.onPokemonDespawn(entity);
             if (entity instanceof EmptyPokeBallEntity) {
                 BallEmitters.onEntityDespawn(entity.getId());
             }

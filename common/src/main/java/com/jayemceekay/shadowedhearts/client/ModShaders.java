@@ -115,6 +115,7 @@ public final class ModShaders {
     // Penumbra density metaball pipeline
     public static ShaderInstance PENUMBRA_DENSITY_SPLAT;
     public static ShaderInstance PENUMBRA_BLUR;
+    public static ShaderInstance SHADOW_POKEMON_AURA_BLUR;
     public static ShaderInstance SHADOW_POKEMON_AURA_XD_FAITHFUL_BLUR;
     public static ShaderInstance PENUMBRA_COMPOSITE;
 
